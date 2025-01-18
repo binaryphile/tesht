@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+files=( * )
+
+IFS=$'\n'
+set -uf
+
+main() {
+  for file in ${files[*]}; do
+    [[ $file == *_test.bash ]] && testfiles+=( $file )
+  done
+
+  for file in ${testfiles[*]}; do
+    tesht $testfile
+  done
+}
+
+return 2>/dev/null
+set -e
+
+main
