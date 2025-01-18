@@ -1,21 +1,38 @@
 #!/usr/bin/env bash
 
-files=( * )
-
-IFS=$'\n'
-set -uf
-
-main() {
-  for file in ${files[*]}; do
-    [[ $file == *_test.bash ]] && testfiles+=( $file )
+Main() {
+  local File TestFiles=()
+  for File in ${Files[*]}; do
+    [[ $File == *_test.bash ]] && TestFiles+=( $File )
   done
 
-  for file in ${testfiles[*]}; do
-    tesht $testfile
+  (( ${#TestFiles[*]} > 0 )) || { echo "no test files found"; exit 1; }
+
+  for File in ${TestFiles[*]}; do
+    Test $File
+  done
+}
+
+ListTestFuncs() { (
+  local Func
+  for Func in $(source $1; declare -F); do
+    Func=${Func#declare -f }
+    [[ $Func == Test[_A-Z]* ]] && echo $Func
+  done
+) }
+
+Test() {
+  local File=$1 Func
+  for Func in $(ListTestFuncs $1); do
+    ( source $1; $Func )
   done
 }
 
 return 2>/dev/null
-set -e
 
-main
+[[ ${1:-} == -x ]] && { shift; set -x; }
+IFS=$'\n'
+Files=( ${1:-}${1:+/}* )
+set -euf
+
+Main "$@"
