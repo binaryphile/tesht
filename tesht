@@ -6,25 +6,60 @@ Main() {
     [[ $File == *_test.bash ]] && TestFiles+=( $File )
   done
 
-  (( ${#TestFiles[*]} > 0 )) || { echo "no test files found"; exit 1; }
+  (( ${#TestFiles[*]} > 0 )) || { echo "no test files found"; exit; }
 
   for File in ${TestFiles[*]}; do
+    local -A Failures=() Outputs=() Successes=()
     Test $File
+    Summarize $File
   done
 }
 
-ListTestFuncs() { (
+Diff() {
+  local First=$1 Second=$2
+  diff <(echo "$First") <(echo "$Second") | cat -T
+}
+
+Error() {
+  echo -e "[error] ${map[name]}:\n$1"
+}
+
+ListTestFuncs() {
   local Func
   for Func in $(source $1; declare -F); do
     Func=${Func#declare -f }
     [[ $Func == Test[_A-Z]* ]] && echo $Func
   done
-) }
+}
+
+Summarize() {
+  local File=${1:-}${1:+#} Func
+  for Func in ${!Successes[*]}; do
+    echo -e "[PASSED]\t$File$Func"
+  done
+
+  for Func in ${!Failures[*]}; do
+    echo -e "[FAILED]\t$File$Func"
+    echo "${Outputs[$Func]#\[error] }"
+  done
+
+  cat <<END
+
+successes: ${#Successes[*]}
+failures:  ${#Failures[*]}
+END
+}
 
 Test() {
   local File=$1 Func
-  for Func in $(ListTestFuncs $1); do
-    ( source $1; $Func )
+
+  for Func in $(ListTestFuncs $File); do
+    local Output
+    Output=$(source $File; $Func)
+    [[ $Output != '[error]'* ]] && { Successes[$Func]=1; return; }
+
+    Failures[$Func]=1
+    Outputs[$Func]=$Output
   done
 }
 
