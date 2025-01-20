@@ -16,8 +16,7 @@ Main() {
 }
 
 Diff() {
-  local First=$1 Second=$2
-  diff <(echo "$First") <(echo "$Second") | cat -T
+  diff <(echo "$1") <(echo "$2") | cat -T
 }
 
 Error() {
@@ -54,8 +53,12 @@ Test() {
   local File=$1 Func
 
   for Func in $(ListTestFuncs $File); do
-    local Output
-    Output=$(source $File; $Func)
+    local Output=$(
+      source $File
+      (( Trace )) && set -x
+      $Func
+      set +x
+    )
     [[ $Output != '[error]'* ]] && { Successes[$Func]=1; return; }
 
     Failures[$Func]=1
@@ -65,7 +68,7 @@ Test() {
 
 return 2>/dev/null
 
-[[ ${1:-} == -x ]] && { shift; set -x; }
+[[ ${1:-} == -x ]] && { shift; Trace=1; } || Trace=0
 IFS=$'\n'
 Files=( ${1:-}${1:+/}* )
 set -euf
