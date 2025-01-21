@@ -31,6 +31,10 @@ ListTestFuncs() {
   done
 }
 
+Run() {
+  echo "=== RUN   $1"
+}
+
 Summarize() {
   local File=${1:-}${1:+#} Func
   for Func in ${!Successes[*]}; do
@@ -53,6 +57,7 @@ Test() {
   local File=$1 Func
 
   for Func in $(ListTestFuncs $File); do
+    echo "=== RUN   $Func"
     local Output=$(
       source $File
       (( Trace )) && set -x
