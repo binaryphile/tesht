@@ -9,71 +9,40 @@ Main() {
   (( ${#TestFiles[*]} > 0 )) || { echo "no test files found"; exit; }
 
   for File in ${TestFiles[*]}; do
-    local -A Failures=() Outputs=() Successes=()
-    Test $File
-    Summarize $File
+    echo "=== RUN   ${File%.bash}"
+    Test "$File" && echo PASS || echo FAIL
   done
-}
-
-Diff() {
-  diff <(echo "$1") <(echo "$2") | cat -T
-}
-
-Error() {
-  echo -e "[error] ${map[name]}:\n$1"
 }
 
 ListTestFuncs() {
   local Func
   for Func in $(source $1; declare -F); do
     Func=${Func#declare -f }
-    [[ $Func == Test[_A-Z]* ]] && echo $Func
+    [[ $Func == Test_[_A-Z]* ]] && echo $Func
   done
-}
-
-Run() {
-  echo "=== RUN   $1"
-}
-
-Summarize() {
-  local File=${1:-}${1:+#} Func
-  for Func in ${!Successes[*]}; do
-    echo -e "[PASSED]\t$File$Func"
-  done
-
-  for Func in ${!Failures[*]}; do
-    echo -e "[FAILED]\t$File$Func"
-    echo "${Outputs[$Func]#\[error] }"
-  done
-
-  cat <<END
-
-successes: ${#Successes[*]}
-failures:  ${#Failures[*]}
-END
 }
 
 Test() {
-  local File=$1 Func
+  local File=$1 Func Failed=0
 
   for Func in $(ListTestFuncs $File); do
     echo "=== RUN   $Func"
-    local Output=$(
-      source $File
-      (( Trace )) && set -x
-      $Func
-      set +x
-    )
-    [[ $Output != '[error]'* ]] && { Successes[$Func]=1; return; }
 
-    Failures[$Func]=1
-    Outputs[$Func]=$Output
+    local Duration Output Rc
+    SECONDS=0
+    Output=$(source $File; $Func) && Rc=$? || Rc=$?
+    Duration=$SECONDS
+
+    (( Rc == 0 )) && { echo "--- PASS: $Func (${Duration}s)"; continue; }
+
+    echo "--- FAIL: $Func (${Duration}s)"
+    echo "$Output"
+    Failed=1
   done
+
+  return $Failed
 }
 
-return 2>/dev/null
-
-[[ ${1:-} == -x ]] && { shift; Trace=1; } || Trace=0
 IFS=$'\n'
 Files=( ${1:-}${1:+/}* )
 set -euf
