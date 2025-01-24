@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
+## internal functions
+
 # main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 main() {
   local file
   for file in $*; do
-    testFile "$file" && echo PASS || echo FAIL
+    testFile $file && echo PASS || echo FAIL
   done
 }
 
@@ -37,6 +39,13 @@ testFile() {
   return $failed
 }
 
+## client api functions
+
+# t.diff returns a diff of its arguments with special characters shown by cat.
+t.diff() {
+  diff <(echo "$1") <(echo "$2") | cat -T
+}
+
 # t.inherit returns an eval'able set of variable assignments from the keys in Map.
 t.inherit() {
   local -n map=$1
@@ -46,23 +55,18 @@ t.inherit() {
   done
 }
 
-# t.diff returns a diff of its arguments with special characters shown by cat.
-t.diff() {
-  diff <(echo "$1") <(echo "$2") | cat -T
-}
-
-# t.run runs a subtest function given as Func with Test as an argument.
-# Test is the name of an associative array holding at least "name".
+# t.run runs a subtest function given as func with testmapname as an argument.
+# testmapname is the name of an associative array holding at least "name".
 # t.run outputs success or failure.
 # It returns an error result code if there was failure.
 t.run() {
-  local func=$1 test=$2 name
-  local -n map=$test
-  name=$func/${map[name]}
+  local func=$1 testmapname=$2
+  local -n map=$testmapname
+  local name=$func/${map[name]}
   echo "    === RUN   $name"
 
   local SECONDS=0 output duration rc
-  ($func $test) && rc=$? || rc=$?
+  ($func $testmapname) && rc=$? || rc=$?
   duration=$SECONDS
 
   (( rc == 0 )) && { echo "    --- PASS: $name ($duration s)"; return; }
