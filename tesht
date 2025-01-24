@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+# main runs any test functions in the files given as arguments.
+# It outputs success or failure.
+main() {
+  local file
+  for file in $*; do
+    testFile "$file" && echo PASS || echo FAIL
+  done
+}
+
+# listTestFuncs lists the name of any functions in $1.
+# Valid function names begin the line with "test_",
+# followed by identifier characters and "()".
+listTestFuncs() {
+  awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
+}
+
+# testFile runs any test functions in File.
+# It outputs success or failure.
+# It returns an error result code if there was a failure.
+testFile() {
+  local file=$1 failed=0 func
+  for func in $(listTestFuncs $file); do
+    echo "=== RUN   $func"
+
+    local SECONDS=0 duration output rc
+    (source $file; $func) && rc=$? || rc=$?
+    duration=$SECONDS
+
+    (( rc == 0 )) && { echo "--- PASS: $func ($duration s)"; continue; }
+
+    echo "--- FAIL: $func ($duration s)"
+    failed=1
+  done
+
+  return $failed
+}
+
+# t.inherit returns an eval'able set of variable assignments from the keys in Map.
+t.inherit() {
+  local -n map=$1
+  local key
+  for key in ${!map[*]}; do
+    echo $key=${map[$key]@Q}
+  done
+}
+
+# t.diff returns a diff of its arguments with special characters shown by cat.
+t.diff() {
+  diff <(echo "$1") <(echo "$2") | cat -T
+}
+
+# t.run runs a subtest function given as Func with Test as an argument.
+# Test is the name of an associative array holding at least "name".
+# t.run outputs success or failure.
+# It returns an error result code if there was failure.
+t.run() {
+  local func=$1 test=$2 name
+  local -n map=$test
+  name=$func/${map[name]}
+  echo "    === RUN   $name"
+
+  local SECONDS=0 output duration rc
+  ($func $test) && rc=$? || rc=$?
+  duration=$SECONDS
+
+  (( rc == 0 )) && { echo "    --- PASS: $name ($duration s)"; return; }
+
+  echo "    --- FAIL: $name ($duration s)"
+  return $rc
+}
+
+# flag to enable tracing
+[[ $1 == -x ]] && { shift; set -x; }
+
+# strict mode
+IFS=$'\n'
+set -- $1${1:+/}*_test.bash  # glob the test file names before turning off globbing
+set -euf
+
+(( $# > 0 )) || { echo "no test files found"; exit; }
+
+main $*
