@@ -5,58 +5,75 @@
 # main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 main() {
-  local file
+  local startTime=$(t.timestamp)
+
+  local failed=0 file
   for file in $*; do
-    testFile $file && echo PASS || echo FAIL
+    test_file $file || failed=1
   done
+
+  local endTime=$(t.timestamp)
+
+  (( failed == 0 )) && echo -n PASS || echo -n FAIL
+  echo " ($(( endTime - startTime)) ms)"
 }
 
-# listTestFuncs lists the name of any functions in $1.
+# list_test_funcs lists the name of any functions in $1.
 # Valid function names begin the line with "test_",
 # followed by identifier characters and "()".
-listTestFuncs() {
+list_test_funcs() {
   awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
-# testFile runs any test functions in File.
+# test_file runs any test functions in file.
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
-testFile() {
+test_file() {
   local file=$1 failed=0 func
-  for func in $(listTestFuncs $file); do
+  for func in $(list_test_funcs $file); do
     echo "=== RUN   $func"
 
-    local SECONDS=0 duration output rc
+    local startTime=$(t.timestamp)
+    local rc
     (source $file; $func) && rc=$? || rc=$?
-    duration=$SECONDS
+    local endTime=$(t.timestamp)
+    local duration=$(( endTime - startTime ))
 
-    (( rc == 0 )) && { echo "--- PASS: $func ($duration s)"; continue; }
+    (( rc == 0 )) && { echo "--- PASS: $func ($duration ms)"; continue; }
 
-    echo "--- FAIL: $func ($duration s)"
+    echo "--- FAIL: $func ($duration ms)"
     failed=1
   done
 
   return $failed
 }
 
-## client api functions
+## helpers - good for regular tests and subtests
 
 # t.diff returns a diff of its arguments with special characters shown by cat.
+# It is a test helper to generate failed assertion output.
 t.diff() {
   diff <(echo "$1") <(echo "$2") | cat -T
 }
 
-# t.inherit returns an eval'able set of variable assignments from the keys in Map.
+## subtest (table test) helpers
+
+# t.inherit returns an eval'able set of variable assignments from a map.
+# The map is an associative array variable in the outer scope named by testmapname.
+# It is a test helper that makes it simple to work with the keys of the testmap.
+# Inspired by nix's inherit keyword.
 t.inherit() {
-  local -n map=$1
+  local testmapname=$1
+  local -n map=$testmapname
   local key
   for key in ${!map[*]}; do
     echo $key=${map[$key]@Q}
   done
 }
 
-# t.run runs a subtest function given as func with testmapname as an argument.
-# testmapname is the name of an associative array holding at least "name".
+# t.run runs a subtest function, func, with testmapname as an argument.
+# testmapname is the name of an associative array in an outer scope
+# holding at least the key "name".
 # t.run outputs success or failure.
 # It returns an error result code if there was failure.
 t.run() {
@@ -65,14 +82,28 @@ t.run() {
   local name=$func/${map[name]}
   echo "    === RUN   $name"
 
-  local SECONDS=0 output duration rc
+  local startTime=$(t.timestamp)
+  local rc
   ($func $testmapname) && rc=$? || rc=$?
-  duration=$SECONDS
+  local endTime=$(t.timestamp)
+  local duration=$(( endTime - startTime ))
 
-  (( rc == 0 )) && { echo "    --- PASS: $name ($duration s)"; return; }
+  (( rc == 0 )) && { echo "    --- PASS: $name ($duration ms)"; return; }
 
-  echo "    --- FAIL: $name ($duration s)"
+  echo "    --- FAIL: $name ($duration ms)"
   return $rc
+}
+
+# t.timestamp returns the current time in Unix time as milliseconds.
+# If we don't have gdate on macos, revert to the builtin SECONDS timer.
+t.timestamp() {
+  [[ $OSTYPE == darwin* ]] && ! command -v gdate && {
+    echo $(( SECONDS * 1000 ))
+    return
+  }
+
+  # we know gdate is available if darwin
+  [[ $OSTYPE == darwin* ]] && gdate +%s%3N || date +%s%3N
 }
 
 # flag to enable tracing
