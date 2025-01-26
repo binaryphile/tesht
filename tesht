@@ -59,32 +59,32 @@ t.diff() {
 ## subtest (table test) helpers
 
 # t.inherit returns an eval'able set of variable assignments from a map.
-# The map is an associative array variable in the outer scope named by testmapname.
+# The map is an associative array variable in the outer scope named by mapname.
 # It is a test helper that makes it simple to work with the keys of the testmap.
 # Inspired by nix's inherit keyword.
 t.inherit() {
-  local testmapname=$1
-  local -n map=$testmapname
+  local mapname=$1
+  local -n map=$mapname
   local key
   for key in ${!map[*]}; do
     echo $key=${map[$key]@Q}
   done
 }
 
-# t.run runs a subtest function, func, with testmapname as an argument.
-# testmapname is the name of an associative array in an outer scope
+# t.run runs a subtest function, func, with mapname as an argument.
+# mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
 # t.run outputs success or failure.
 # It returns an error result code if there was failure.
 t.run() {
-  local func=$1 testmapname=$2
-  local -n map=$testmapname
+  local func=$1 mapname=$2
+  local -n map=$mapname
   local name=$func/${map[name]}
   echo "    === RUN   $name"
 
   local startTime=$(t.timestamp)
   local rc
-  ($func $testmapname) && rc=$? || rc=$?
+  ($func $mapname) && rc=$? || rc=$?
   local endTime=$(t.timestamp)
   local duration=$(( endTime - startTime ))
 
