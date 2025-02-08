@@ -18,7 +18,7 @@ well.
 ```bash
 tesht [DIR]
 
-DIR is a directory containing test files.
+DIR is a directory containing test files.  DIR defaults to the current directory.
 ```
 
 ## Example

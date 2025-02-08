@@ -14,8 +14,11 @@ main() {
 
   local endTime=$(t.timestamp)
 
-  (( failed == 0 )) && echo -n PASS || echo -n FAIL
-  echo " ($(( endTime - startTime)) ms)"
+  if (( failed == 0 )); then
+    echo -e "$Green"PASS"$None  ($(( endTime - startTime)) ms)"
+  else
+    echo -e "$Red"FAIL"$None  ($(( endTime - startTime)) ms)"
+  fi
 }
 
 # list_test_funcs lists the name of any functions in $1.
@@ -31,7 +34,7 @@ list_test_funcs() {
 test_file() {
   local file=$1 failed=0 func
   for func in $(list_test_funcs $file); do
-    echo "=== RUN   $func"
+    echo -e "$Yellow=== RUN$None       $func"
 
     local startTime=$(t.timestamp)
     local rc
@@ -39,10 +42,12 @@ test_file() {
     local endTime=$(t.timestamp)
     local duration=$(( endTime - startTime ))
 
-    (( rc == 0 )) && { echo "--- PASS: $func ($duration ms)"; continue; }
-
-    echo "--- FAIL: $func ($duration ms)"
-    failed=1
+    if (( rc == 0 )); then
+      echo -e "$Green--- PASS$None      $func ($duration ms)"
+    else
+      echo -e "$Red--- FAIL$None      $func ($duration ms)"
+      failed=1
+    fi
   done
 
   return $failed
@@ -80,7 +85,7 @@ t.run() {
   local func=$1 mapname=$2
   local -n map=$mapname
   local name=$func/${map[name]}
-  echo "    === RUN   $name"
+  echo -e "    $Yellow=== RUN$None   $name"
 
   local startTime=$(t.timestamp)
   local rc
@@ -88,9 +93,12 @@ t.run() {
   local endTime=$(t.timestamp)
   local duration=$(( endTime - startTime ))
 
-  (( rc == 0 )) && { echo "    --- PASS: $name ($duration ms)"; return; }
+  if (( rc == 0 )); then
+    echo -e "    $Green--- PASS$None  $name ($duration ms)"
+  else
+    echo -e "    $Red--- FAIL$None  $name ($duration ms)"
+  fi
 
-  echo "    --- FAIL: $name ($duration ms)"
   return $rc
 }
 
@@ -109,6 +117,12 @@ t.timestamp() {
 # flag to enable tracing
 [[ $1 == -x ]] && { shift; set -x; }
 
+# globals
+Green='\033[38;5;82m'
+None='\033[0m'
+Red='\033[38;5;196m'
+Yellow='\033[38;5;228m'
+
 # strict mode
 IFS=$'\n'
 set -- $1${1:+/}*_test.bash  # glob the test file names before turning off globbing
@@ -117,3 +131,4 @@ set -euf
 (( $# > 0 )) || { echo "no test files found"; exit; }
 
 main $*
+
