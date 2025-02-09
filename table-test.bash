@@ -9,6 +9,8 @@ sut=sut   # system under test
 
 # Subtests are run with t.run.
 test_sut() {
+  # test case parameters
+
   local -A case1=(
     [name]='basic'
     [args]=''
@@ -21,8 +23,8 @@ test_sut() {
     [wanterr]=1
   )
 
-  # subtest runs each subtest.
-  # case is expected to be the name of an associative array holding at least the key "name".
+  # Define the subtest that is run against cases.
+  # casename is expected to be the name of an associative array holding at least the key "name",
   # Each subtest that needs a directory creates it in /tmp.
   subtest() {
     casename=$1
@@ -32,10 +34,9 @@ test_sut() {
 
     # temporary directory
 
-    dir=$(mktemp -d /tmp/tesht.XXXXXX)
-    [[ $dir == /tmp/tesht.* ]] || return
+    dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
 
-    trap "rm -rf $dir" EXIT # always clean up
+    trap "[[ \"$dir\" == /*/* ]] && rm -rf '$dir'" EXIT # always clean up
     cd $dir
 
     # set positional args for command
@@ -51,6 +52,7 @@ test_sut() {
 
     # if this is a test for error behavior, check it
     [[ -v wanterr ]] && {
+      # so long as the error is the expected one, return without error
       (( rc == wanterr )) && return
 
       echo -e "    $sut/$name error = $rc, want: $wanterr\n$got"
