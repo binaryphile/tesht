@@ -84,7 +84,7 @@ t.inherit() {
 t.run() {
   local func=$1 mapname=$2
   local -n map=$mapname
-  local name=$func/${map[name]}
+  local name=${FUNCNAME[1]}/${map[name]}
   echo -e "    $Yellow=== RUN$None   $name"
 
   local startTime=$(t.timestamp)
