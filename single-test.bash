@@ -9,9 +9,8 @@ test_somefunc() {
   ## arrange
 
   # temporary directory
-  dir=$(mktemp -d /tmp/tesht.XXXXXX) || return        # fail if can't make dir
-  trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"   # belt-and-suspenders rm -rf
-  trap $trapcmd EXIT                                  # always clean up
+  trapcmd=$(t.mktemp) || return   # fail if can't make dir
+  trap $trapcmd EXIT              # always clean up
   cd $dir
 
   subject=${FUNCNAME#test_}   # the name of the function under test

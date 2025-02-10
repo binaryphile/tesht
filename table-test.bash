@@ -12,7 +12,7 @@ test_somefunc() {
   # test case parameters
 
   local -A case1=(
-    [name]='basic'        # test name that shows up in output
+    [name]='basic'        # case name that shows up in output
     [args]='some args'    # command arguments to the test subject
     [want]='some output'  # the desired command output
   )
@@ -34,9 +34,8 @@ test_somefunc() {
     eval "$(t.inherit $casename)"
 
     # temporary directory
-    dir=$(mktemp -d /tmp/tesht.XXXXXX) || return        # fail if can't make dir
-    trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"   # belt-and-suspenders rm -rf
-    trap $trapcmd EXIT                                  # always clean up
+    trapcmd=$(t.mktemp) || return   # fail if can't make dir
+    trap $trapcmd EXIT              # always clean up
     cd $dir
 
     # set the command, positional args and output display name

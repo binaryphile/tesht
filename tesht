@@ -5,14 +5,14 @@
 # main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 main() {
-  local startTime=$(t.timestamp)
+  local startTime=$(timestamp)
 
   local failed=0 file
   for file in $*; do
     test_file $file || failed=1
   done
 
-  local endTime=$(t.timestamp)
+  local endTime=$(timestamp)
   local duration=$(( endTime - startTime ))
 
   if (( failed == 0 )); then
@@ -35,11 +35,11 @@ list_test_funcs() {
 test_file() {
   local file=$1 failed=0 func
   for func in $(list_test_funcs $file); do
-    echo -e "=== RUN       $func"
+    echo "=== RUN       $func"
 
-    local startTime=$(t.timestamp) rc
+    local startTime=$(timestamp) rc
     (source $file; $func) && rc=$? || rc=$?
-    local endTime=$(t.timestamp)
+    local endTime=$(timestamp)
     local duration=$(( endTime - startTime ))
 
     if (( rc == 0 )); then
@@ -53,7 +53,19 @@ test_file() {
   return $failed
 }
 
-## helpers - good for regular tests and subtests
+# timestamp returns the current time in Unix time as milliseconds.
+# If we don't have gdate on macos, revert to the builtin SECONDS timer.
+timestamp() {
+  [[ $OSTYPE == darwin* ]] && ! command -v gdate && {
+    echo $(( SECONDS * 1000 ))
+    return
+  }
+
+  # we know gdate is available if darwin
+  [[ $OSTYPE == darwin* ]] && gdate +%s%3N || date +%s%3N
+}
+
+## helpers - good for regular tests and table tests
 
 # t.diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
@@ -61,7 +73,15 @@ t.diff() {
   diff <(echo "$1") <(echo "$2") | cat -T
 }
 
-## subtest (table test) helpers
+# t.mktempdir makes a temporary directory and returns the directory name.
+# It returns an error if it cannot make the directory.
+t.mktempdir() {
+  dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
+  [[ $dir == /*/* && -d $dir ]] || return
+  echo $dir
+}
+
+## table test helpers
 
 # t.inherit returns an eval'able set of variable assignments from a map.
 # The map is an associative array variable in the outer scope named by mapname.
@@ -85,12 +105,12 @@ t.run() {
   local subtest=$1 subject=$2 mapname=$3
   local -n map=$mapname
   local name=test_$subject/${map[name]}
-  echo -e "    === RUN   $name"
+  echo "    === RUN   $name"
 
-  local startTime=$(t.timestamp)
+  local startTime=$(timestamp)
   local rc
   ($subtest $subject $mapname) && rc=$? || rc=$?
-  local endTime=$(t.timestamp)
+  local endTime=$(timestamp)
   local duration=$(( endTime - startTime ))
 
   if (( rc == 0 )); then
@@ -100,18 +120,6 @@ t.run() {
   fi
 
   return $rc
-}
-
-# t.timestamp returns the current time in Unix time as milliseconds.
-# If we don't have gdate on macos, revert to the builtin SECONDS timer.
-t.timestamp() {
-  [[ $OSTYPE == darwin* ]] && ! command -v gdate && {
-    echo $(( SECONDS * 1000 ))
-    return
-  }
-
-  # we know gdate is available if darwin
-  [[ $OSTYPE == darwin* ]] && gdate +%s%3N || date +%s%3N
 }
 
 # flag to enable tracing
