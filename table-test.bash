@@ -5,10 +5,12 @@
 
 source ./task.bash
 
-sut=sut   # system under test
-
 # Subtests are run with t.run.
-test_sut() {
+test_somefunc() {
+  subject=${FUNCNAME#test_}
+
+  # test case parameters
+
   local -A case1=(
     [name]='basic'
     [args]=''
@@ -21,21 +23,25 @@ test_sut() {
     [wanterr]=1
   )
 
-  # subtest runs each subtest.
-  # case is expected to be the name of an associative array holding at least the key "name".
+  # Define the subtest that is run against cases.
+  # casename is expected to be the name of an associative array holding at least the key "name".
   # Each subtest that needs a directory creates it in /tmp.
   subtest() {
-    casename=$1
-    eval "$(t.inherit $casename)"  # create variables from the keys/values of the test case map
-
     ## arrange
+
+    # create variables from the keys/values of the test case map
+    casename=$2
+    eval "$(t.inherit $casename)"
+
+    subject=$1
+    name="    $subject/$name()"
 
     # temporary directory
 
-    dir=$(mktemp -d /tmp/tesht.XXXXXX)
-    [[ $dir == /tmp/tesht.* ]] || return
+    dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
 
-    trap "rm -rf $dir" EXIT # always clean up
+    trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"
+    trap $trapcmd EXIT # always clean up
     cd $dir
 
     # set positional args for command
@@ -44,35 +50,36 @@ test_sut() {
     ## act
 
     # run the command and capture the output and result code
-    got=$($sut $* 2>&1)
+    got=$($subject $* 2>&1)
     rc=$?
 
     ## assert
 
     # if this is a test for error behavior, check it
     [[ -v wanterr ]] && {
+      # so long as the error is the expected one, return without error
       (( rc == wanterr )) && return
 
-      echo -e "    $sut/$name error = $rc, want: $wanterr\n$got"
+      echo -e "$name error = $rc, want: $wanterr\n$got"
       return 1
     }
 
     # assert no error
     (( rc == 0 )) || {
-      echo -e "    $sut/$name error = $rc, want: 0\n$got"
+      echo -e "$name error = $rc, want: 0\n$got"
       return 1
     }
 
     # assert that we got the wanted output
     [[ $got == "$want" ]] || {
-      echo -e "    $sut/$name got doesn't match want:\n$(t.diff "$got" "$want")"
+      echo -e "$name got doesn't match want:\n$(t.diff "$got" "$want")"
       return 1
     }
   }
 
   failed=0
   for casename in ${!case@}; do
-    t.run subtest $casename || failed=1
+    t.run subtest $subject $casename || failed=1
   done
 
   return $failed

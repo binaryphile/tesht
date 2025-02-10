@@ -15,10 +15,11 @@ test_sut() {
 
   dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
 
-  trapcmd="rm -rf $dir"
+  trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"
   trap $trapcmd EXIT        # always clean up
   cd $dir
 
+  # specify test parameters
   set -- 'args to $sut go here'
   want=''
 
