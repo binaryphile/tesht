@@ -3,7 +3,7 @@
 # This is a sample test file.  To use it, copy the file to a name that ends in `_test.bash`
 # (note the underscore rather than hyphen).
 
-source ./task.bash
+source ./somefunc.bash
 
 # Subtests are run with t.run.
 test_somefunc() {
@@ -12,15 +12,15 @@ test_somefunc() {
   # test case parameters
 
   local -A case1=(
-    [name]='basic'
-    [args]=''
-    [want]=''
+    [name]='basic'        # test name that shows up in output
+    [args]='some args'    # command arguments to the test subject
+    [want]='some output'  # the desired command output
   )
 
   local -A case2=(
     [name]='error'
-    [args]=''
-    [wanterr]=1
+    [args]='some args'
+    [wanterr]=1           # the desired error result code
   )
 
   # Define the subtest that is run against cases.
@@ -33,19 +33,16 @@ test_somefunc() {
     casename=$2
     eval "$(t.inherit $casename)"
 
-    subject=$1
-    name="    $subject/$name()"
-
     # temporary directory
-
-    dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
-
-    trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"
-    trap $trapcmd EXIT # always clean up
+    dir=$(mktemp -d /tmp/tesht.XXXXXX) || return        # fail if can't make dir
+    trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"   # belt-and-suspenders rm -rf
+    trap $trapcmd EXIT                                  # always clean up
     cd $dir
 
-    # set positional args for command
+    # set the command, positional args and output display name
+    subject=$1
     eval "set -- $args"
+    name="    $subject/$name()"
 
     ## act
 

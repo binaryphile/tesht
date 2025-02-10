@@ -3,43 +3,37 @@
 # This is a sample test file.  To use it, copy the file to a name that ends in `_test.bash`
 # (note the underscore rather than hyphen).
 
-source ./task.bash
+source ./somefunc.bash
 
-sut=sut   # system under test
-
-# It does its work in a directory it creates in /tmp.
-test_sut() {
+test_somefunc() {
   ## arrange
 
   # temporary directory
-
-  dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
-
-  trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"
-  trap $trapcmd EXIT        # always clean up
+  dir=$(mktemp -d /tmp/tesht.XXXXXX) || return        # fail if can't make dir
+  trapcmd="[[ \"$dir\" == /*/* ]] && rm -rf '$dir'"   # belt-and-suspenders rm -rf
+  trap $trapcmd EXIT                                  # always clean up
   cd $dir
 
-  # specify test parameters
-  set -- 'args to $sut go here'
-  want=''
+  subject=${FUNCNAME#test_}   # the name of the function under test
+  want='some output'          # the desired command output
 
   ## act
 
   # run the command and capture the output and result code
-  got=$($sut $* 2>&1)
+  got=$($subject args to command go here 2>&1)
   rc=$?
 
   ## assert
 
   # assert no error
   (( rc == 0 )) || {
-    echo -e "$sut() error = $rc, want: 0\n$got"
+    echo -e "$subject() error = $rc, want: 0\n$got"
     return 1
   }
 
   # assert that we got the wanted output
   [[ $got == "$want" ]] || {
-    echo -e "$sut() got doesn't match want:\n$(t.diff "$got" "$want")"
+    echo -e "$subject() got doesn't match want:\n$(t.diff "$got" "$want")"
     return 1
   }
 }
