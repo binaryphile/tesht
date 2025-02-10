@@ -9,7 +9,7 @@ main() {
 
   local failed=0 file
   for file in $*; do
-    test_file $file || failed=1
+    testFile $file || failed=1
   done
 
   local endTime=$(timestamp)
@@ -18,23 +18,23 @@ main() {
   if (( failed == 0 )); then
     echo -e "${Green}PASS$None  ($duration ms)"
   else
-    echo -e "${Red}FAIL$None  ($duration ms)"
+    echo -e "${Red}FAIL$None"
   fi
 }
 
-# list_test_funcs lists the name of any functions in $1.
+# listTestFuncs lists the name of any functions in $1.
 # Valid function names begin the line with "test_",
 # followed by identifier characters and "()".
-list_test_funcs() {
+listTestFuncs() {
   awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
-# test_file runs any test functions in file.
+# testFile runs any test functions in file.
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
-test_file() {
+testFile() {
   local file=$1 failed=0 func
-  for func in $(list_test_funcs $file); do
+  for func in $(listTestFuncs $file); do
     echo "=== RUN       $func"
 
     local startTime=$(timestamp) rc
@@ -42,12 +42,18 @@ test_file() {
     local endTime=$(timestamp)
     local duration=$(( endTime - startTime ))
 
-    if (( rc == 0 )); then
-      echo -e "--- ${Green}PASS$None      $func ($duration ms)"
-    else
-      echo -e "--- ${Red}FAIL$None      $func ($duration ms)"
-      failed=1
-    fi
+    case $rc in
+      0   ) echo -e "--- ${Green}PASS$None      $func ($duration ms)";;
+      128 )
+        echo -e "--- ${Red}FATAL$None      $func"
+
+        return 128
+        ;;
+      *   )
+        echo -e "--- ${Red}FAIL$None      $func"
+        failed=1
+        ;;
+    esac
   done
 
   return $failed
@@ -96,7 +102,7 @@ t.inherit() {
   done
 }
 
-# t.run runs a subtest function, func, with mapname as an argument.
+# t.run runs a subtest function with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
 # t.run outputs success or failure.
@@ -113,11 +119,11 @@ t.run() {
   local endTime=$(timestamp)
   local duration=$(( endTime - startTime ))
 
-  if (( rc == 0 )); then
-    echo -e "    --- ${Green}PASS$None  $name ($duration ms)"
-  else
-    echo -e "    --- ${Red}FAIL$None  $name ($duration ms)"
-  fi
+  case $rc in
+    0   ) echo -e "    --- ${Green}PASS$None  $name ($duration ms)";;
+    128 ) echo -e "    --- ${Red}FATAL$None  $func";;
+    *   ) echo -e "    --- ${Red}FAIL$None  $name";;
+  esac
 
   return $rc
 }

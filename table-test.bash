@@ -23,25 +23,25 @@ test_somecommand() {
     [wanterr]=1           # the desired error result code
   )
 
-  # Define the subtest that is run against cases.
-  # casename is expected to be the name of an associative array holding at least the key "name".
+  # subtest is the the test code run against the test cases.
+  # command is the command under test.
+  # casename is the name of an associative array holding at least the key "name".
   # Each subtest that needs a directory creates it in /tmp.
   subtest() {
+    command=$1 casename=$2
+
     ## arrange
 
     # create variables from the keys/values of the test case map
-    casename=$2
     eval "$(t.inherit $casename)"
 
     # temporary directory
-    dir=$(t.mktempdir) || return  # fail if can't make dir
-    trap "rm -rf $dir" EXIT       # always clean up
+    dir=$(t.mktempdir) || return 128  # fatal if can't make dir
+    trap "rm -rf $dir" EXIT           # always clean up
     cd $dir
 
-    # set the command, positional args and output display name
-    command=$1
+    # set positional args
     eval "set -- $args"
-    name="    $command/$name()"
 
     ## act
 
@@ -53,29 +53,30 @@ test_somecommand() {
 
     # if this is a test for error behavior, check it
     [[ -v wanterr ]] && {
-      # so long as the error is the expected one, return without error
-      (( rc == wanterr )) && return
-
-      echo -e "$name error = $rc, want: $wanterr\n$got"
+      (( rc == wanterr )) && return   # so long as the error is the expected one, return without error
+      echo -e "    $command/$name: error = $rc, want: $wanterr\n$got"
       return 1
     }
 
     # assert no error
     (( rc == 0 )) || {
-      echo -e "$name error = $rc, want: 0\n$got"
+      echo -e "    $command/$name: error = $rc, want: 0\n$got"
       return 1
     }
 
     # assert that we got the wanted output
     [[ $got == "$want" ]] || {
-      echo -e "$name got doesn't match want:\n$(t.diff "$got" "$want")"
+      echo -e "    $command/$name got doesn't match want:\n$(t.diff "$got" "$want")"
       return 1
     }
   }
 
   failed=0
   for casename in ${!case@}; do
-    t.run subtest $command $casename || failed=1
+    t.run subtest $command $casename || {
+      (( $? == 128 )) && return   # fatal
+      failed=1
+    }
   done
 
   return $failed
