@@ -3,17 +3,17 @@
 # This is a sample test file.  To use it, copy the file to a name that ends in `_test.bash`
 # (note the underscore rather than hyphen).
 
-source ./somefunc.bash
+source ./somecommand.bash   # if the command being tested is a function, source it
 
 # Subtests are run with t.run.
-test_somefunc() {
-  subject=${FUNCNAME#test_}
+test_somecommand() {
+  command=${FUNCNAME#test_}
 
   # test case parameters
 
   local -A case1=(
     [name]='basic'        # case name that shows up in output
-    [args]='some args'    # command arguments to the test subject
+    [args]='some args'    # command arguments to the test command
     [want]='some output'  # the desired command output
   )
 
@@ -34,19 +34,19 @@ test_somefunc() {
     eval "$(t.inherit $casename)"
 
     # temporary directory
-    trapcmd=$(t.mktemp) || return   # fail if can't make dir
-    trap $trapcmd EXIT              # always clean up
+    dir=$(t.mktempdir) || return  # fail if can't make dir
+    trap "rm -rf $dir" EXIT       # always clean up
     cd $dir
 
     # set the command, positional args and output display name
-    subject=$1
+    command=$1
     eval "set -- $args"
-    name="    $subject/$name()"
+    name="    $command/$name()"
 
     ## act
 
     # run the command and capture the output and result code
-    got=$($subject $* 2>&1)
+    got=$($command $* 2>&1)
     rc=$?
 
     ## assert
@@ -75,7 +75,7 @@ test_somefunc() {
 
   failed=0
   for casename in ${!case@}; do
-    t.run subtest $subject $casename || failed=1
+    t.run subtest $command $casename || failed=1
   done
 
   return $failed

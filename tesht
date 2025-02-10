@@ -102,14 +102,14 @@ t.inherit() {
 # t.run outputs success or failure.
 # It returns an error result code if there was failure.
 t.run() {
-  local subtest=$1 subject=$2 mapname=$3
+  local subtest=$1 command=$2 mapname=$3
   local -n map=$mapname
-  local name=test_$subject/${map[name]}
+  local name=test_$command/${map[name]}
   echo "    === RUN   $name"
 
   local startTime=$(timestamp)
   local rc
-  ($subtest $subject $mapname) && rc=$? || rc=$?
+  ($subtest $command $mapname) && rc=$? || rc=$?
   local endTime=$(timestamp)
   local duration=$(( endTime - startTime ))
 

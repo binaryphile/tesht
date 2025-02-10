@@ -3,36 +3,36 @@
 # This is a sample test file.  To use it, copy the file to a name that ends in `_test.bash`
 # (note the underscore rather than hyphen).
 
-source ./somefunc.bash
+source ./somecommand.bash   # if the command being tested is a function, source it
 
-test_somefunc() {
+test_somecommand() {
   ## arrange
 
   # temporary directory
-  trapcmd=$(t.mktemp) || return   # fail if can't make dir
-  trap $trapcmd EXIT              # always clean up
+  dir=$(t.mktempdir) || return  # fail if can't make dir
+  trap "rm -rf $dir" EXIT       # always clean up
   cd $dir
 
-  subject=${FUNCNAME#test_}   # the name of the function under test
+  command=${FUNCNAME#test_}   # the name of the function under test
   want='some output'          # the desired command output
 
   ## act
 
   # run the command and capture the output and result code
-  got=$($subject args to command go here 2>&1)
+  got=$($command args to command go here 2>&1)
   rc=$?
 
   ## assert
 
   # assert no error
   (( rc == 0 )) || {
-    echo -e "$subject() error = $rc, want: 0\n$got"
+    echo -e "$command: error = $rc, want: 0\n$got"
     return 1
   }
 
   # assert that we got the wanted output
   [[ $got == "$want" ]] || {
-    echo -e "$subject() got doesn't match want:\n$(t.diff "$got" "$want")"
+    echo -e "$command: got doesn't match want:\n$(t.diff "$got" "$want")"
     return 1
   }
 }
