@@ -76,7 +76,7 @@ timestamp() {
 # t.diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
 t.diff() {
-  diff <(echo "$1") <(echo "$2") | cat -T
+  diff <(echo "$1") <(echo "$2") | cat -T | tail -n +2
 }
 
 # t.mktempdir makes a temporary directory and returns the directory name.
