@@ -1,67 +1,107 @@
 #!/usr/bin/env bash
 
+IFS=$'\n'
+
 ## internal functions
 
 # main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 main() {
-  local startTime=$(timestamp)
+  local testnameList=$1 filenames=( $2 )
 
-  local failed=0 file
-  for file in $*; do
-    testFile $file || failed=1
+  local startTime=$(Timestamp) failed=0
+
+  for filename in ${filenames[*]}; do
+    TestFile $filename "$testnameList" || failed=1
   done
 
-  local endTime=$(timestamp)
-  local duration=$(( endTime - startTime ))
+  local endTime=$(Timestamp)
+  local d=$(( endTime - startTime ))
 
-  if (( failed == 0 )); then
-    echo -e "${Green}PASS$None  ($duration ms)"
+  local columns='%-28s    %8s\n'
+  if (( failed )); then
+    printf $columns "$Red"FAIL$Reset $(Duration $d)
   else
-    echo -e "${Red}FAIL$None"
+    printf $columns "$Green"PASS$Reset $(Duration $d)
   fi
 }
 
-# listTestFuncs lists the name of any functions in $1.
+# Contains returns whether item is in array.
+Contains() {
+  local -n array=$1
+  [[ "$IFS${array[*]}$IFS" == *"$IFS$2$IFS"* ]]
+}
+
+# duration prints a duration.
+Duration() { printf '%dms' $1; }
+
+# ListTestNames lists the name of any functions in $1.
 # Valid function names begin the line with "test_",
 # followed by identifier characters and "()".
-listTestFuncs() {
+ListTestNames() {
   awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
-# testFile runs any test functions in file.
+# PortIsInUse detects whether port is already in use.
+PortIsInUse() {
+  local pid rc
+  command -v lsof &>/dev/null && {
+    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
+    return $rc
+  }
+
+  command -v ss &>/dev/null && {
+    ss -tuln | grep -q ":$port\b" && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken"
+    return $rc
+  }
+
+  netstat -an | grep -qE "(:$port\s+).*LISTEN" && rc=$? || rc=$?
+  (( rc == 0 )) && echo "http server port $port is taken"
+  return $rc
+}
+
+Green=$'\033[38;5;82m'
+Red=$'\033[38;5;196m'
+Reset=$'\033[0m'
+
+Pass="--- $Green"PASS$Reset
+Fail="--- $Red"FAIL$Reset
+Fatal="--- $Red"FATAL$Reset
+
+# TestFile runs any test functions in file.
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
-testFile() {
-  local file=$1 failed=0 func
-  for func in $(listTestFuncs $file); do
-    echo "=== RUN       $func"
+TestFile() {
+  local filename=$1 testnames=( $2 ) failed=0
+  for testname in $(ListTestNames $filename); do
+    (( ${#testnames[*]} == 0 )) || Contains testnames $testname || continue
 
-    local startTime=$(timestamp) rc
-    (source $file; $func) && rc=$? || rc=$?
-    local endTime=$(timestamp)
-    local duration=$(( endTime - startTime ))
+    local columns='%-14s    %8s    %s\n'
+    printf $columns '=== RUN' '' $testname
 
+    local startTime=$(Timestamp) rc
+    (source $filename; $testname) && rc=$? || rc=$?
+    local endTime=$(Timestamp)
+    local d=$(( endTime - startTime ))
+
+    columns='%-28s    %8s    %s\n'
     case $rc in
-      0   ) echo -e "--- ${Green}PASS$None      $func ($duration ms)";;
-      128 )
-        echo -e "--- ${Red}FATAL$None      $func"
+      0   ) printf $columns $Pass $(Duration $d) $testname;;
 
-        return 128
-        ;;
-      *   )
-        echo -e "--- ${Red}FAIL$None      $func"
-        failed=1
-        ;;
+      128 ) printf $columns $Fatal '' $testname; return 128;;
+
+      *   ) printf $columns $Fail '' $testname; failed=1;;
     esac
   done
 
   return $failed
 }
 
-# timestamp returns the current time in Unix time as milliseconds.
+# Timestamp returns the current time in Unix time as milliseconds.
 # If we don't have gdate on macos, revert to the builtin SECONDS timer.
-timestamp() {
+Timestamp() {
   [[ $OSTYPE == darwin* ]] && ! command -v gdate && {
     echo $(( SECONDS * 1000 ))
     return
@@ -76,14 +116,15 @@ timestamp() {
 # t.diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
 t.diff() {
-  diff <(echo "$1") <(echo "$2") | cat -T | tail -n +2
+  diff <(echo "$1") <(echo "$2") | cat -vT | tail -n +2
 }
 
 # t.mktempdir makes a temporary directory and returns the directory name.
 # It returns an error if it cannot make the directory.
 t.mktempdir() {
-  dir=$(mktemp -d /tmp/tesht.XXXXXX) || return
-  [[ $dir == /*/* && -d $dir ]] || return
+  dir=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
+  [[ $dir == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
+  [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
   echo $dir
 }
 
@@ -107,23 +148,60 @@ t.inherit() {
 # holding at least the key "name".
 # t.run outputs success or failure.
 # It returns an error result code if there was failure.
+# t.run cannot wholly rely on the global namespace for tesht functions/variables
+# because it runs in the context of a test, so be careful.
 t.run() {
   local subtest=$1 command=$2 mapname=$3
+
   local -n map=$mapname
-  local name=test_$command/${map[name]}
-  echo "    === RUN   $name"
+  local testname=test_$command/${map[name]}
 
-  local startTime=$(timestamp)
-  local rc
+  local green=$'\033[38;5;82m'
+  local red=$'\033[38;5;196m'
+  local reset=$'\033[0m'
+
+  local pass="    --- $green"PASS$reset
+  local fail="    --- $red"FAIL$reset
+  local fatal="    --- $red"FATAL$reset
+
+  local columns='%-14s    %8s    %s\n'
+  printf $columns '    === RUN' '' $testname
+
+  local startTime=$(Timestamp) rc
   ($subtest $command $mapname) && rc=$? || rc=$?
-  local endTime=$(timestamp)
-  local duration=$(( endTime - startTime ))
+  local endTime=$(Timestamp)
 
+  local duration
+  printf -v duration '%dms' $(( endTime - startTime ))
+
+  columns='%-28s    %8s    %s\n'
   case $rc in
-    0   ) echo -e "    --- ${Green}PASS$None  $name ($duration ms)";;
-    128 ) echo -e "    --- ${Red}FATAL$None  $func";;
-    *   ) echo -e "    --- ${Red}FAIL$None  $name";;
+    0   ) printf $columns $pass $duration $testname;;
+    128 ) printf $columns $fatal '' $testname;;
+    *   ) printf $columns $fail '' $testname;;
   esac
+
+  return $rc
+}
+
+# t.start_http_server starts an http server in the current directory on 127.0.0.1:port.
+# It waits until the server is ready before returning.
+t.start_http_server() {
+  local port=${1:-8000}
+
+  PortIsInUse $port && return 1
+
+  # start the http server, redirect stdout so it doesn't hang
+  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
+  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
+
+  for duration in 0.1 0.2 0.4 0.8; do
+    sleep $duration
+    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
+    (( rc == 0 )) && break
+  done
+
+  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
 
   return $rc
 }
@@ -131,17 +209,18 @@ t.run() {
 # flag to enable tracing
 [[ $1 == -x ]] && { shift; set -x; }
 
-# globals
-Green='\033[38;5;82m'
-None='\033[0m'
-Red='\033[38;5;196m'
+TestnameList=${1//,/$IFS}
+FilenameList=${2//,/$IFS}
+
+shopt -s nullglob
+Filenames=( *_test.bash )
+shopt -u nullglob
+
+[[ $FilenameList == '' ]] && FilenameList=${Filenames[*]}
+[[ $FilenameList == '' ]] && { echo "no test files found"; exit; }
 
 # strict mode
-IFS=$'\n'
-set -- $1${1:+/}*_test.bash  # glob the test file names before turning off globbing
+return 2>/dev/null
 set -euf
 
-(( $# > 0 )) || { echo "no test files found"; exit; }
-
-main $*
-
+main "$TestnameList" "$FilenameList"

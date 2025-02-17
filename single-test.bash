@@ -14,7 +14,7 @@ test_somecommand() {
   cd $dir
 
   command=${FUNCNAME#test_}   # the name of the function under test
-  want='some output'          # the desired command output
+  want='some output'          # the command's desired output
 
   ## act
 

@@ -5,7 +5,6 @@
 
 source ./somecommand.bash   # if the command being tested is a function, source it
 
-# Subtests are run with t.run.
 test_somecommand() {
   command=${FUNCNAME#test_}
 
@@ -13,8 +12,8 @@ test_somecommand() {
 
   local -A case1=(
     [name]='basic'        # case name that shows up in output
-    [args]='some args'    # command arguments to the test command
-    [want]='some output'  # the desired command output
+    [args]='some args'    # arguments to the command being tested
+    [want]='some output'  # the command's desired output
   )
 
   local -A case2=(
@@ -74,7 +73,7 @@ test_somecommand() {
   failed=0
   for casename in ${!case@}; do
     t.run subtest $command $casename || {
-      (( $? == 128 )) && return   # fatal
+      (( $? == 128 )) && return 128   # fatal
       failed=1
     }
   done
