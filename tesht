@@ -139,7 +139,7 @@ t.inherit() {
   local -n map=$mapname
   local key
   for key in ${!map[*]}; do
-    echo $key=${map[$key]@Q}
+    echo "declare $key=${map[$key]@Q}"
   done
 }
 
