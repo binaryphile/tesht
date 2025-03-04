@@ -20,9 +20,9 @@ main() {
 
   local columns='%-28s    %8s\n'
   if (( failed )); then
-    printf $columns "$Red"FAIL$Reset $(Duration $d)
+    printf $columns "${Red}FAIL$Reset" $(Duration $d)
   else
-    printf $columns "$Green"PASS$Reset $(Duration $d)
+    printf $columns "${Green}PASS$Reset" $(Duration $d)
   fi
 }
 
@@ -86,7 +86,7 @@ TestFile() {
     local endTime=$(Timestamp)
     local d=$(( endTime - startTime ))
 
-    columns='%-28s    %8s    %s\n'
+    columns='\r%-28s    %8s    %s\n'
     case $rc in
       0   ) printf $columns $Pass $(Duration $d) $testname;;
 
@@ -151,10 +151,10 @@ t.inherit() {
 # t.run cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
 t.run() {
-  local subtest=$1 command=$2 mapname=$3
+  local subtest=$1 testname=$2 mapname=$3
 
   local -n map=$mapname
-  local testname=test_$command/${map[name]}
+  local testname=$testname/${map[name]}
 
   local green=$'\033[38;5;82m'
   local red=$'\033[38;5;196m'
@@ -164,17 +164,17 @@ t.run() {
   local fail="    --- $red"FAIL$reset
   local fatal="    --- $red"FATAL$reset
 
-  local columns='%-14s    %8s    %s\n'
+  local columns='%-14s    %8s    %s'
   printf $columns '    === RUN' '' $testname
 
   local startTime=$(Timestamp) rc
-  ($subtest $command $mapname) && rc=$? || rc=$?
+  ($subtest $mapname) && rc=$? || rc=$?
   local endTime=$(Timestamp)
 
   local duration
   printf -v duration '%dms' $(( endTime - startTime ))
 
-  columns='%-28s    %8s    %s\n'
+  columns='\r%-28s    %8s    %s\n'
   case $rc in
     0   ) printf $columns $pass $duration $testname;;
     128 ) printf $columns $fatal '' $testname;;
