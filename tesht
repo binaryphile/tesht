@@ -143,7 +143,7 @@ t.inherit() {
   done
 }
 
-# t.run runs a subtest function with mapname as an argument.
+# t.run runs the function `subtest` with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
 # t.run outputs success or failure.
@@ -151,7 +151,7 @@ t.inherit() {
 # t.run cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
 t.run() {
-  local subtest=$1 testname=$2 mapname=$3
+  local testname=$1 mapname=$2
 
   local -n map=$mapname
   local testname=$testname/${map[name]}
@@ -168,7 +168,7 @@ t.run() {
   printf $columns '    === RUN' '' $testname
 
   local startTime=$(Timestamp) rc
-  ($subtest $mapname) && rc=$? || rc=$?
+  (subtest $mapname) && rc=$? || rc=$?
   local endTime=$(Timestamp)
 
   local duration

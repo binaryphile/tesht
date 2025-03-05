@@ -6,8 +6,6 @@
 source ./somecommand.bash   # if the command being tested is a function, source it
 
 test_somecommand() {
-  command=${FUNCNAME#test_}
-
   # test case parameters
 
   local -A case1=(
@@ -27,7 +25,7 @@ test_somecommand() {
   # casename is the name of an associative array holding at least the key "name".
   # Each subtest that needs a directory creates it in /tmp.
   subtest() {
-    local command=$1 casename=$2
+    local casename=$1
 
     ## arrange
 
@@ -53,20 +51,20 @@ test_somecommand() {
     # if this is a test for error behavior, check it
     [[ -v wanterr ]] && {
       (( rc == wanterr )) && return   # so long as the error is the expected one, return without error
-      echo -e "        test_$command/$name: error = $rc, want: $wanterr\n$got"
+      echo -e "\ttest_$command/$name: error = $rc, want: $wanterr\n$got"
       return 1
     }
 
     # assert no error
     (( rc == 0 )) || {
-      echo -e "        test_$command/$name: error = $rc, want: 0\n$got"
+      echo -e "\ttest_$command/$name: error = $rc, want: 0\n$got"
       return 1
     }
 
     # assert that we got the wanted output
     [[ $got == "$want" ]] || {
-      echo -e "        test_$command/$name got doesn't match want:\n$(t.diff "$got" "$want")\n"
-      echo "        got = ${got@Q}"
+      echo -e "\ttest_$command/$name got doesn't match want:\n$(t.diff "$got" "$want")\n"
+      echo -e "\tgot = ${got@Q}"
       return 1
     }
 
@@ -75,7 +73,7 @@ test_somecommand() {
 
   local failed=0 casename
   for casename in ${!case@}; do
-    t.run subtest $command $casename || {
+    t.run $casename || {
       (( $? == 128 )) && return 128   # fatal
       failed=1
     }
