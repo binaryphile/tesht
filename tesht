@@ -64,11 +64,14 @@ PortIsInUse() {
 
 Green=$'\033[38;5;82m'
 Red=$'\033[38;5;196m'
+Yellow=$'\033[38;5;220m'
+
 Reset=$'\033[0m'
 
-Pass="--- $Green"PASS$Reset
 Fail="--- $Red"FAIL$Reset
 Fatal="--- $Red"FATAL$Reset
+Pass="--- $Green"PASS$Reset
+Run="=== $Yellow"RUN$Reset
 
 # TestFile runs any test functions in file.
 # It outputs success or failure.
@@ -78,8 +81,8 @@ TestFile() {
   for testname in $(ListTestNames $filename); do
     (( ${#testnames[*]} == 0 )) || Contains testnames $testname || continue
 
-    local columns='%-14s    %8s    %s\n'
-    printf $columns '=== RUN' '' $testname
+    local columns='%-14s    %8s    %s'
+    printf $columns $Run '' $testname
 
     local startTime=$(Timestamp) rc
     (source $filename; $testname) && rc=$? || rc=$?
@@ -158,14 +161,17 @@ t.run() {
 
   local green=$'\033[38;5;82m'
   local red=$'\033[38;5;196m'
+  local yellow='\033[38;5;220m'
+
   local reset=$'\033[0m'
 
-  local pass="    --- $green"PASS$reset
   local fail="    --- $red"FAIL$reset
   local fatal="    --- $red"FATAL$reset
+  local pass="    --- $green"PASS$reset
+  local run="    --- $yellow"RUN$reset
 
   local columns='%-14s    %8s    %s'
-  printf $columns '    === RUN' '' $testname
+  printf $columns "    === $run" '' $testname
 
   local startTime=$(Timestamp) rc
   (subtest $mapname) && rc=$? || rc=$?
