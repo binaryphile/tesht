@@ -6,8 +6,6 @@
 source ./somecommand.bash   # if the command being tested is a function, source it
 
 test_somecommand() {
-  command=${FUNCNAME#test_}
-
   # test case parameters
 
   local -A case1=(
@@ -27,52 +25,55 @@ test_somecommand() {
   # casename is the name of an associative array holding at least the key "name".
   # Each subtest that needs a directory creates it in /tmp.
   subtest() {
-    command=$1 casename=$2
+    local casename=$1
 
     ## arrange
+
+    # unset any optional field's variable name here
+    unset -v wanterr
 
     # create variables from the keys/values of the test case map
     eval "$(t.inherit $casename)"
 
     # temporary directory
-    dir=$(t.mktempdir) || return 128  # fatal if can't make dir
-    trap "rm -rf $dir" EXIT           # always clean up
+    local dir=$(t.mktempdir) || return 128  # fatal if can't make dir
+    trap "rm -rf $dir" EXIT                 # always clean up
     cd $dir
-
-    # set positional args
-    eval "set -- $args"
 
     ## act
 
     # run the command and capture the output and result code
-    got=$($command $* 2>&1)
-    rc=$?
+    local got rc
+    got=$(eval "$command $args" 2>&1) && rc=$? || rc=$?
 
     ## assert
 
     # if this is a test for error behavior, check it
     [[ -v wanterr ]] && {
       (( rc == wanterr )) && return   # so long as the error is the expected one, return without error
-      echo -e "    $command/$name: error = $rc, want: $wanterr\n$got"
+      echo -e "\ttest_$command/$name: error = $rc, want: $wanterr\n$got"
       return 1
     }
 
     # assert no error
     (( rc == 0 )) || {
-      echo -e "    $command/$name: error = $rc, want: 0\n$got"
+      echo -e "\ttest_$command/$name: error = $rc, want: 0\n$got"
       return 1
     }
 
     # assert that we got the wanted output
     [[ $got == "$want" ]] || {
-      echo -e "    $command/$name got doesn't match want:\n$(t.diff "$got" "$want")"
+      echo -e "\ttest_$command/$name got doesn't match want:\n$(t.diff "$got" "$want")\n"
+      echo -e "\tgot = ${got@Q}"
       return 1
     }
+
+    return 0
   }
 
-  failed=0
+  local failed=0 casename
   for casename in ${!case@}; do
-    t.run subtest $command $casename || {
+    t.run $casename || {
       (( $? == 128 )) && return 128   # fatal
       failed=1
     }

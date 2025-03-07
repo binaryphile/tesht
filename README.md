@@ -16,9 +16,14 @@ well.
 ## Usage
 
 ```bash
-tesht [DIR]
+tesht [TEST]
 
-DIR is a directory containing test files.  DIR defaults to the current directory.
+With no arguments, all tests in the current directory are run.
+
+If TEST is supplied, it is the name of a test function, e.g. `test_myfunc`.
+It is run by itself.
+
+There is not yet a way to run individual subtests.
 ```
 
 ## Example
@@ -152,7 +157,7 @@ from tesht, in the form of the `t.run` function (the `t.` is for `tesht`).  `t.r
 subtest, handling report formatting and timing.  Its signature is:
 
 ```bash
-t.run subtest testcasename
+t.run testcasename
 ```
 
 where `subtest` is the name of the subtest function (usually just `subtest`) and
@@ -194,8 +199,8 @@ test_ln() {
 
   # loop through the test cases
   failed=0
-  for testcasename in testcase{1,2}; do
-    t.run subtest $testmapname || failed=1
+  for casename in ${@case}; do
+    t.run $casename || failed=1
   done
 
   return $failed

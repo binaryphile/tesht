@@ -26,13 +26,16 @@ test_somecommand() {
 
   # assert no error
   (( rc == 0 )) || {
-    echo -e "$command: error = $rc, want: 0\n$got"
+    echo -e "    $command: error = $rc, want: 0\n$got"
     return 1
   }
 
   # assert that we got the wanted output
   [[ $got == "$want" ]] || {
-    echo -e "$command: got doesn't match want:\n$(t.diff "$got" "$want")"
+    echo -e "    $command: got doesn't match want:\n$(t.diff "$got" "$want")\n"
+    echo "    got = ${got@Q}"
     return 1
   }
+
+  return 0
 }
