@@ -68,10 +68,10 @@ Yellow=$'\033[38;5;220m'
 
 Reset=$'\033[0m'
 
-Fail="--- $Red"FAIL$Reset
-Fatal="--- $Red"FATAL$Reset
-Pass="--- $Green"PASS$Reset
-Run="=== $Yellow"RUN$Reset
+Fail="--- ${Red}FAIL$Reset"
+Fatal="--- ${Red}FATAL$Reset"
+Pass="--- ${Green}PASS$Reset"
+Run="=== ${Yellow}RUN$Reset"
 
 # TestFile runs any test functions in file.
 # It outputs success or failure.
@@ -95,7 +95,7 @@ TestFile() {
 
       128 ) printf $columns $Fatal '' $testname; return 128;;
 
-      *   ) printf $columns $Fail '' $testname; failed=1;;
+      *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1;;
     esac
   done
 
@@ -170,7 +170,7 @@ t.run() {
   local pass="    --- ${green}PASS$reset"
   local run="    === ${yellow}RUN$reset"
 
-  local columns='%-14s    %8s    %s'
+  local columns='\r%-14s    %8s    %s'
   printf $columns $run '' $testname
 
   local startTime=$(Timestamp) rc
@@ -184,7 +184,7 @@ t.run() {
   case $rc in
     0   ) printf $columns $pass $duration $testname;;
     128 ) printf $columns $fatal '' $testname;;
-    *   ) printf $columns $fail '' $testname;;
+    *   ) printf $columns $fail '' $yellow$testname$reset;;
   esac
 
   return $rc
