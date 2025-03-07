@@ -51,20 +51,20 @@ test_somecommand() {
     # if this is a test for error behavior, check it
     [[ -v wanterr ]] && {
       (( rc == wanterr )) && return   # so long as the error is the expected one, return without error
-      echo -e "\ttest_$command/$name: error = $rc, want: $wanterr\n$got"
+      echo -e "\n\ttest_$command/$name: error = $rc, want: $wanterr\n$got"
       return 1
     }
 
     # assert no error
     (( rc == 0 )) || {
-      echo -e "\ttest_$command/$name: error = $rc, want: 0\n$got"
+      echo -e "\n\ttest_$command/$name: error = $rc, want: 0\n$got"
       return 1
     }
 
     # assert that we got the wanted output
     [[ $got == "$want" ]] || {
-      echo -e "\ttest_$command/$name got doesn't match want:\n$(t.diff "$got" "$want")\n"
-      echo -e "\tgot = ${got@Q}"
+      echo -e "\n\ttest_$command/$name got doesn't match want:\n$(t.diff "$got" "$want")\n"
+      echo -e "use this line to update want to match this output:\nwant=${got@Q}"
       return 1
     }
 
