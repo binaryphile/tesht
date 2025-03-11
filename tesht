@@ -116,15 +116,15 @@ Timestamp() {
 
 ## helpers - good for regular tests and table tests
 
-# t.diff returns a diff of its arguments with special characters shown by cat.
+# tesht.diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
-t.diff() {
+tesht.diff() {
   diff <(echo "$1") <(echo "$2") | cat -vT | tail -n +2
 }
 
-# t.mktempdir makes a temporary directory and returns the directory name.
+# tesht.mktempdir makes a temporary directory and returns the directory name.
 # It returns an error if it cannot make the directory.
-t.mktempdir() {
+tesht.mktempdir() {
   dir=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
   [[ $dir == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
   [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
@@ -133,11 +133,11 @@ t.mktempdir() {
 
 ## table test helpers
 
-# t.inherit returns an eval'able set of variable assignments from a map.
+# tesht.inherit returns an eval'able set of variable assignments from a map.
 # The map is an associative array variable in the outer scope named by mapname.
 # It is a test helper that makes it simple to work with the keys of the testmap.
 # Inspired by nix's inherit keyword.
-t.inherit() {
+tesht.inherit() {
   local mapname=$1
   local -n map=$mapname
   local key
@@ -146,14 +146,14 @@ t.inherit() {
   done
 }
 
-# t.run runs the function `subtest` with mapname as an argument.
+# tesht.run runs the function `subtest` with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
-# t.run outputs success or failure.
+# tesht.run outputs success or failure.
 # It returns an error result code if there was failure.
-# t.run cannot wholly rely on the global namespace for tesht functions/variables
+# tesht.run cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
-t.run() {
+tesht.run() {
   local testname=$1 mapname=$2
 
   local -n map=$mapname
@@ -190,9 +190,9 @@ t.run() {
   return $rc
 }
 
-# t.start_http_server starts an http server in the current directory on 127.0.0.1:port.
+# tesht.start_http_server starts an http server in the current directory on 127.0.0.1:port.
 # It waits until the server is ready before returning.
-t.start_http_server() {
+tesht.start_http_server() {
   local port=${1:-8000}
 
   PortIsInUse $port && return 1
