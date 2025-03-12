@@ -105,13 +105,10 @@ TestFile() {
 # Timestamp returns the current time in Unix time as milliseconds.
 # If we don't have gdate on macos, revert to the builtin SECONDS timer.
 Timestamp() {
-  [[ $OSTYPE == darwin* ]] && ! command -v gdate && {
-    echo $(( SECONDS * 1000 ))
-    return
-  }
-
-  # we know gdate is available if darwin
-  [[ $OSTYPE == darwin* ]] && gdate +%s%3N || date +%s%3N
+  local whole fraction
+  # EPOCHREALTIME reports second fractions to nano precision
+  IFS=. read -r whole fraction <<<$EPOCHREALTIME
+  echo "$whole${fraction:0:3}"
 }
 
 ## helpers - good for regular tests and table tests
