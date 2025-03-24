@@ -4,6 +4,8 @@ IFS=$'\n'
 
 ## internal functions
 
+declare -i PassCount=0 TestCount=0    # -i enables arithmetic operations
+
 # main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 main() {
@@ -24,6 +26,8 @@ main() {
   else
     printf $columns "${Green}PASS$Reset" $(Duration $d)
   fi
+
+  echo $PassCount/$TestCount
 }
 
 # Contains returns whether item is in array.
@@ -77,25 +81,48 @@ Run="=== ${Yellow}RUN$Reset"
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 TestFile() {
-  local filename=$1 testnames=( $2 ) failed=0
+  local filename=$1 testnames=( $2 )
+
+  local failed=0    # overall result -- fails if any individual run fails
   for testname in $(ListTestNames $filename); do
     (( ${#testnames[*]} == 0 )) || Contains testnames $testname || continue
 
     local columns='%-14s    %8s    %s'
     printf $columns $Run '' $testname
 
-    local startTime=$(Timestamp) rc
-    (source $filename; $testname) && rc=$? || rc=$?
+    local startTime=$(Timestamp)
+
+    local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
+    local -i subtestTestCount=0 subtestPassCount=0
+    (
+      source $filename
+      $testname && rc=$? || rc=$?
+      [[ $(declare -f $testname) == *tesht.run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
+      exit $rc
+    ) && rc=$? || rc=$?
+    [[ -e $tmpname ]] && {
+      IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname
+      rm -f $tmpname
+    }
+
     local endTime=$(Timestamp)
     local d=$(( endTime - startTime ))
 
+    if (( subtestTestCount > 0 )); then
+      TestCount+=$subtestTestCount
+      PassCount+=$subtestPassCount
+    else
+      TestCount+=1
+    fi
+
     columns='\r%-28s    %8s    %s\n'
     case $rc in
-      0   ) printf $columns $Pass $(Duration $d) $testname;;
-
-      128 ) printf $columns $Fatal '' $testname; return 128;;
-
-      *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1;;
+      0 )
+        printf $columns $Pass $(Duration $d) $testname
+        (( subtestTestCount == 0 )) && PassCount+=1
+        ;;
+      128 ) printf $columns $Fatal '' $testname; return 128 ;;
+      *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1 ;;
     esac
   done
 
@@ -177,10 +204,15 @@ tesht.run() {
   local duration
   printf -v duration '%dms' $(( endTime - startTime ))
 
+  subtestTestCount+=1   # locally declared by caller
   columns='\r%-28s    %8s    %s\n'
   case $rc in
-    0   ) printf $columns $pass $duration $testname;;
+    0   )
+      printf $columns $pass $duration $testname
+      subtestPassCount+=1   # locally declared by caller
+      ;;
     128 ) printf $columns $fatal '' $testname;;
+
     *   ) printf $columns $fail '' $yellow$testname$reset;;
   esac
 
