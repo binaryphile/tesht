@@ -114,8 +114,9 @@ tesht.testFile() {
     local -i subtestTestCount=0 subtestPassCount=0
     (
       source $filename
-      $testname && rc=$? || rc=$?
-      [[ $(declare -f $testname) == *tesht.run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
+      $testname | tesht.tab
+      rc=$PIPESTATUS
+      [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
       exit $rc
     ) && rc=$? || rc=$?
     [[ -e $tmpname ]] && {
@@ -160,6 +161,7 @@ tesht.timestamp() {
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
 tesht.Diff() {
+  local got=$1 want=$2
   diff <(echo "$1") <(echo "$2") | cat -vT | tail -n +2
 }
 
@@ -217,7 +219,7 @@ tesht.Run() {
   printf $columns $run '' $testname
 
   local startTime=$(tesht.timestamp) rc
-  (subtest $mapname) && rc=$? || rc=$?
+  (subtest $mapname | tesht.tab) && rc=$? || rc=$?
   local endTime=$(tesht.timestamp)
 
   local duration
@@ -258,6 +260,14 @@ tesht.StartHttpServer() {
   (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
 
   return $rc
+}
+
+# tesht.tab indents each line of input with a tab.
+tesht.tab() {
+  local line
+  while read -r line; do
+    printf '\t%s\n' $line
+  done
 }
 
 # flag to enable tracing
