@@ -1,53 +1,71 @@
 #!/usr/bin/env bash
 
+# Naming Policy:
+#
+# All function and variable names are camelCased.
+# Local variable names begin with lowercase letters, e.g. localVariable.
+#
+# Global variable names begin with uppercase letters, e.g. GlobalVariable.
+# Since this is a library, global variable names are also namespaced by suffixing them with
+# the randomly-generated letter T, e.g. GlobalVariableT.
+# Global variables are not public.  Library consumers should not be aware of them.
+# If users need to interact with them, create accessor functions for the purpose.
+#
+# Variable declarations that are name references borrow the environment namespace, e.g.
+# "local -n ARRAY=$1".
+#
+# Private function names begin with lowercase letters.
+# Public function names begin with uppercase letters.
+# Function names are prefixed with "tesht." (always lowercase) so they are namespaced.
+
 IFS=$'\n'
 
 ## internal functions
 
-declare -i PassCount=0 TestCount=0    # -i enables arithmetic operations
+declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
-# main runs any test functions in the files given as arguments.
+# tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
-main() {
-  local testnameList=$1 filenames=( $2 )
+tesht.Main() {
+  local TestnameListT=$1 FilenamesT=( $2 )
 
-  local startTime=$(Timestamp) failed=0
+  local startTime=$(tesht.timestamp) failed=0
 
-  for filename in ${filenames[*]}; do
-    TestFile $filename "$testnameList" || failed=1
+  for filename in ${FilenamesT[*]}; do
+    tesht.testFile $filename "$TestnameListT" || failed=1
   done
 
-  local endTime=$(Timestamp)
+  local endTime=$(tesht.timestamp)
   local d=$(( endTime - startTime ))
 
   local columns='%-28s    %8s\n'
   if (( failed )); then
-    printf $columns "${Red}FAIL$Reset" $(Duration $d)
+    printf $columns "${Red}FAIL$Reset" $(tesht.duration $d)
   else
-    printf $columns "${Green}PASS$Reset" $(Duration $d)
+    printf $columns "${Green}PASS$Reset" $(tesht.duration $d)
   fi
 
-  echo $PassCount/$TestCount
+  echo $PassCountT/$TestCountT
 }
 
-# Contains returns whether item is in array.
-Contains() {
-  local -n array=$1
-  [[ "$IFS${array[*]}$IFS" == *"$IFS$2$IFS"* ]]
+# tesht.contains returns whether item is in array.
+tesht.contains() {
+  local -n ARRAY=$1
+  [[ "$IFS${ARRAY[*]}$IFS" == *"$IFS$2$IFS"* ]]
 }
 
-# duration prints a duration.
-Duration() { printf '%dms' $1; }
+# tesht.duration prints a duration.
+tesht.duration() { printf '%dms' $1; }
 
-# ListTestNames lists the name of any functions in $1.
+# tesht.listTestnames lists the name of any functions in $1.
 # Valid function names begin the line with "test_",
 # followed by identifier characters and "()".
-ListTestNames() {
+tesht.listTestnames() {
   awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
-# PortIsInUse detects whether port is already in use.
-PortIsInUse() {
+# tesht.portIsInUse detects whether port is already in use.
+tesht.portIsInUse() {
   local pid rc
   command -v lsof &>/dev/null && {
     pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
@@ -77,20 +95,20 @@ Fatal="--- ${Red}FATAL$Reset"
 Pass="--- ${Green}PASS$Reset"
 Run="=== ${Yellow}RUN$Reset"
 
-# TestFile runs any test functions in file.
+# tesht.testFile runs any test functions in file.
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
-TestFile() {
+tesht.testFile() {
   local filename=$1 testnames=( $2 )
 
   local failed=0    # overall result -- fails if any individual run fails
-  for testname in $(ListTestNames $filename); do
-    (( ${#testnames[*]} == 0 )) || Contains testnames $testname || continue
+  for testname in $(tesht.listTestnames $filename); do
+    (( ${#testnames[*]} == 0 )) || tesht.contains testnames $testname || continue
 
     local columns='%-14s    %8s    %s'
     printf $columns $Run '' $testname
 
-    local startTime=$(Timestamp)
+    local startTime=$(tesht.timestamp)
 
     local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
     local -i subtestTestCount=0 subtestPassCount=0
@@ -105,21 +123,21 @@ TestFile() {
       rm -f $tmpname
     }
 
-    local endTime=$(Timestamp)
+    local endTime=$(tesht.timestamp)
     local d=$(( endTime - startTime ))
 
     if (( subtestTestCount > 0 )); then
-      TestCount+=$subtestTestCount
-      PassCount+=$subtestPassCount
+      TestCountT+=$subtestTestCount
+      PassCountT+=$subtestPassCount
     else
-      TestCount+=1
+      TestCountT+=1
     fi
 
     columns='\r%-28s    %8s    %s\n'
     case $rc in
       0 )
-        printf $columns $Pass $(Duration $d) $testname
-        (( subtestTestCount == 0 )) && PassCount+=1
+        printf $columns $Pass $(tesht.duration $d) $testname
+        (( subtestTestCount == 0 )) && PassCountT+=1
         ;;
       128 ) printf $columns $Fatal '' $testname; return 128 ;;
       *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1 ;;
@@ -129,9 +147,8 @@ TestFile() {
   return $failed
 }
 
-# Timestamp returns the current time in Unix time as milliseconds.
-# If we don't have gdate on macos, revert to the builtin SECONDS timer.
-Timestamp() {
+# tesht.timestamp returns the current time in Unix time as milliseconds.
+tesht.timestamp() {
   local whole fraction
   # EPOCHREALTIME reports second fractions to nano precision
   IFS=. read -r whole fraction <<<$EPOCHREALTIME
@@ -140,28 +157,30 @@ Timestamp() {
 
 ## helpers - good for regular tests and table tests
 
-# tesht.diff returns a diff of its arguments with special characters shown by cat.
+# tesht.Diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
-tesht.diff() {
+tesht.Diff() {
   diff <(echo "$1") <(echo "$2") | cat -vT | tail -n +2
 }
 
-# tesht.mktempdir makes a temporary directory and returns the directory name.
+# tesht.MktempDir makes a temporary directory and returns the directory name.
 # It returns an error if it cannot make the directory.
-tesht.mktempdir() {
+tesht.MktempDir() {
   dir=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
+
   [[ $dir == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
+
   [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
   echo $dir
 }
 
 ## table test helpers
 
-# tesht.inherit returns an eval'able set of variable assignments from a map.
+# tesht.Inherit returns an eval'able set of variable assignments from a map.
 # The map is an associative array variable in the outer scope named by mapname.
 # It is a test helper that makes it simple to work with the keys of the testmap.
-# Inspired by nix's inherit keyword.
-tesht.inherit() {
+# Inspired by nix's Inherit keyword.
+tesht.Inherit() {
   local mapname=$1
   local -n map=$mapname
   local key
@@ -170,14 +189,14 @@ tesht.inherit() {
   done
 }
 
-# tesht.run runs the function `subtest` with mapname as an argument.
+# tesht.Run runs the function `subtest` with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
-# tesht.run outputs success or failure.
+# tesht.Run outputs success or failure.
 # It returns an error result code if there was failure.
-# tesht.run cannot wholly rely on the global namespace for tesht functions/variables
+# tesht.Run cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
-tesht.run() {
+tesht.Run() {
   local testname=$1 mapname=$2
 
   local -n map=$mapname
@@ -197,9 +216,9 @@ tesht.run() {
   local columns='\r%-14s    %8s    %s'
   printf $columns $run '' $testname
 
-  local startTime=$(Timestamp) rc
+  local startTime=$(tesht.timestamp) rc
   (subtest $mapname) && rc=$? || rc=$?
-  local endTime=$(Timestamp)
+  local endTime=$(tesht.timestamp)
 
   local duration
   printf -v duration '%dms' $(( endTime - startTime ))
@@ -219,12 +238,12 @@ tesht.run() {
   return $rc
 }
 
-# tesht.start_http_server starts an http server in the current directory on 127.0.0.1:port.
+# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
 # It waits until the server is ready before returning.
-tesht.start_http_server() {
+tesht.StartHttpServer() {
   local port=${1:-8000}
 
-  PortIsInUse $port && return 1
+  tesht.portIsInUse $port && return 1
 
   # start the http server, redirect stdout so it doesn't hang
   pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
@@ -244,18 +263,19 @@ tesht.start_http_server() {
 # flag to enable tracing
 [[ $1 == -x ]] && { shift; set -x; }
 
-TestnameList=${1//,/$IFS}
-FilenameList=${2//,/$IFS}
+TestnameListT=${1//,/$IFS}
+FilenameListT=${2//,/$IFS}
 
 shopt -s nullglob
-Filenames=( *_test.bash )
+FilenamesT=( *_test.bash )
 shopt -u nullglob
 
-[[ $FilenameList == '' ]] && FilenameList=${Filenames[*]}
-[[ $FilenameList == '' ]] && { echo "no test files found"; exit; }
+[[ $FilenameListT == '' ]] && FilenameListT=${FilenamesT[*]}
+[[ $FilenameListT == '' ]] && { echo "no test files found"; exit; }
+unset -v FilenamesT
 
 # strict mode
 return 2>/dev/null
 set -euf
 
-main "$TestnameList" "$FilenameList"
+tesht.Main "$TestnameListT" "$FilenameListT"
