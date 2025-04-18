@@ -1,6 +1,6 @@
 NL=$'\n'
 
-# test_testFile tests that testFile tracks subtest results.
+# test_testFile tests that a test with a subtest is counted properly.
 # Subtests are run with tesht.Run.
 test_tesht.testFile() {
   ## arrange
@@ -10,12 +10,18 @@ test_tesht.testFile() {
 
   ## act
 
-  # run the command and capture the output and result code
-  local got rc
-  got=$(tesht.testFile dummy_tests.bash 2>&1) && rc=$? || rc=$?
+  # run the command in a subshell and check counting happened
+  local rc got
+  got=$(
+    tesht.testFile dummy_tests.bash test_dummy 2>&1
+    exit $TestCountT
+  ) && rc=$? || rc=$?
 
   ## assert
 
   # assert counting was done
-  (( PassCountT == 0 )) || echo "${NL}tesht.testFile: PassCountT is not 0."
+  (( rc == 2 )) || {
+    echo "${NL}tesht.testFile: TestCountT is wrong. want: 2, got: $TestCountT$NL"
+    return 1
+  }
 }

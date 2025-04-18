@@ -11,17 +11,13 @@
 # Local variable names begin with lowercase letters, e.g. localVariable.
 #
 # Global variable names begin with uppercase letters, e.g. GlobalVariable.
-# Since this is a library, global variable names are also namespaced by suffixing them with
+# Global variable names are also namespaced by suffixing them with
 # the randomly-generated letter T, e.g. GlobalVariableT.
-# Global variables are not public.  Library consumers should not be aware of them.
-# If users need to interact with them, create accessor functions for the purpose.
 #
 # Variable declarations that are name references borrow the environment namespace, e.g.
 # "local -n ARRAY=$1".
 
 IFS=$'\n'
-
-## internal functions
 
 declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
@@ -48,6 +44,8 @@ tesht.Main() {
 
   echo $PassCountT/$TestCountT
 }
+
+## internal functions
 
 # tesht.contains returns whether item is in array.
 tesht.contains() {
