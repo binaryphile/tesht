@@ -100,7 +100,7 @@ Run="=== ${Yellow}RUN$Reset"
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
-  local filename=$1 testnames=( $2 )
+  local filename=$1 testnames=( ${2:-} )
 
   local failed=0    # overall result -- fails if any individual run fails
   for testname in $(tesht.listTestnames $filename); do
