@@ -113,7 +113,7 @@ tesht.testFile() {
     local -i subtestTestCount=0 subtestPassCount=0
     (
       source $filename
-      $testname | tesht.tab
+      $testname
       rc=$PIPESTATUS
       [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
       exit $rc
