@@ -3,24 +3,21 @@
 # Naming Policy:
 #
 # All function and variable names are camelCased.
-# Local variable names begin with lowercase letters, e.g. localVariable.
-#
-# Global variable names begin with uppercase letters, e.g. GlobalVariable.
-# Since this is a library, global variable names are also namespaced by suffixing them with
-# the randomly-generated letter T, e.g. GlobalVariableT.
-# Global variables are not public.  Library consumers should not be aware of them.
-# If users need to interact with them, create accessor functions for the purpose.
-#
-# Variable declarations that are name references borrow the environment namespace, e.g.
-# "local -n ARRAY=$1".
 #
 # Private function names begin with lowercase letters.
 # Public function names begin with uppercase letters.
 # Function names are prefixed with "tesht." (always lowercase) so they are namespaced.
+#
+# Local variable names begin with lowercase letters, e.g. localVariable.
+#
+# Global variable names begin with uppercase letters, e.g. GlobalVariable.
+# Global variable names are also namespaced by suffixing them with
+# the randomly-generated letter T, e.g. GlobalVariableT.
+#
+# Variable declarations that are name references borrow the environment namespace, e.g.
+# "local -n ARRAY=$1".
 
 IFS=$'\n'
-
-## internal functions
 
 declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
@@ -47,6 +44,8 @@ tesht.Main() {
 
   echo $PassCountT/$TestCountT
 }
+
+## internal functions
 
 # tesht.contains returns whether item is in array.
 tesht.contains() {
@@ -99,7 +98,7 @@ Run="=== ${Yellow}RUN$Reset"
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
-  local filename=$1 testnames=( $2 )
+  local filename=$1 testnames=( ${2:-} )
 
   local failed=0    # overall result -- fails if any individual run fails
   for testname in $(tesht.listTestnames $filename); do
@@ -114,7 +113,7 @@ tesht.testFile() {
     local -i subtestTestCount=0 subtestPassCount=0
     (
       source $filename
-      $testname | tesht.tab
+      $testname
       rc=$PIPESTATUS
       [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
       exit $rc

@@ -1,5 +1,7 @@
 # tesht - table-driven testing for Bash
 
+![version](assets/version.svg) ![lines](assets/lines.svg) ![tests](assets/tests.svg) ![coverage](assets/coverage.svg)
+
 **tesht** is a command-line tool for testing Bash code.  By itself, the command `tesht`
 searches for files in the current directory ending in `_test.bash`.  It runs any test
 functions it finds, functions having names starting with `test_`.  Each function and its
