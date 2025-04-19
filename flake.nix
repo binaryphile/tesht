@@ -19,6 +19,7 @@
             asciinema
             asciinema-agg
             bash
+            coreutils
             git
             kcov
             scc

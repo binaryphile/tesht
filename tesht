@@ -157,11 +157,25 @@ tesht.timestamp() {
 
 ## helpers - good for regular tests and table tests
 
+# tesht.AssertGot returns whether the items match and, if not, outputs a message.
+tesht.AssertGot() {
+  local got=$1 want=$2
+
+  [[ $got == "$want" ]] || {
+    cat <<END
+got does not match want:
+$(tesht.Diff "$got" "$want")
+use this line to update want to match this output:
+want=${got@Q}"
+END
+  }
+}
+
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
 tesht.Diff() {
   local got=$1 want=$2
-  diff <(echo "$1") <(echo "$2") | cat -vT | tail -n +2
+  diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
 }
 
 # tesht.MktempDir makes a temporary directory and returns the directory name.
@@ -190,14 +204,14 @@ tesht.Inherit() {
   done
 }
 
-# tesht.Run runs the function `subtest` with mapname as an argument.
+# tesht.runSubtest runs the function `subtest` with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
-# tesht.Run outputs success or failure.
+# It outputs success or failure.
 # It returns an error result code if there was failure.
-# tesht.Run cannot wholly rely on the global namespace for tesht functions/variables
+# It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
-tesht.Run() {
+tesht.runSubtest() {
   local testname=$1 mapname=$2
 
   local -n map=$mapname
@@ -237,6 +251,23 @@ tesht.Run() {
   esac
 
   return $rc
+}
+
+# tesht.Run runs tesht.runSubtest on each test case.
+tesht.Run() {
+  local name=$1
+  shift
+  local casenames=( "$@" )
+
+  local failed=0 casename
+  for casename in "${casenames[@]}"; do
+    tesht.runSubtest "$name" "$casename" || {
+      (( $? == 128 )) && return 128 # fatal
+      failed=1
+    }
+  done
+
+  return $failed
 }
 
 # tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
