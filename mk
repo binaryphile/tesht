@@ -35,6 +35,7 @@ cmd.badges() {
   cmd.lines
 
   makeBadge "version" $(<VERSION) "#007ec6" assets/version.svg
+  echo "made version badge"
 }
 
 # cmd.cover runs coverage testing and makes a badge.
@@ -47,25 +48,29 @@ cmd.cover() {
 
   local percent=$(jq -r .percent_covered ${filenames[0]})
   makeBadge coverage "${percent%%.*}%" "#4c1" assets/coverage.svg
+  echo "made coverage badge"
 }
 
-# cmd.gif creates a gif showing a sample run of update-env for README.md.
+# cmd.gif creates a gif showing a sample run for README.md.
 cmd.gif() {
   asciinema rec -c '/usr/bin/bash -c tesht' tesht.cast
   agg --speed 0.1 tesht.cast assets/tesht.gif
   rm tesht.gif
+  echo "made gif"
 }
 
 # cmd.lines determines the number of lines of source and makes a badge.
 cmd.lines() {
   local lines=$(scc -f csv tesht | tail -n 1 | { IFS=, read -r language rawLines lines rest; echo $lines; })
   makeBadge "source lines" $(addCommas $lines) "#007ec6" assets/lines.svg
+  echo "made source lines badge"
 }
 
 # cmd.test runs tesht and makes a badge.
 cmd.test() {
   local testsPassed=$(tesht | tee /dev/tty | tail -n 1)
   makeBadge tests $testsPassed "#4c1" assets/tests.svg
+  echo "made test result badge"
 }
 
 ## helpers

@@ -1,5 +1,5 @@
 {
-  description = "task.bash development environment";
+  description = "tesht development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs";

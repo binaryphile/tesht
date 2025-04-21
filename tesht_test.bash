@@ -1,7 +1,7 @@
+# Because we are being run by tesht, it is already loaded and doesn't need to be sourced.
 NL=$'\n'
 
-# test_testFile tests that a test with a subtest is counted properly.
-# Subtests are run with tesht.Run.
+# test_testFile tests that a test with two subtests is counted properly.
 test_tesht.testFile() {
   ## arrange
   # mock out a nondeterministic input, the current time

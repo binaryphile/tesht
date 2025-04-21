@@ -23,16 +23,16 @@ declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
-tesht.Main() {
+tesht.MainTemplate() {
   local TestnameListT=$1 FilenamesT=( $2 )
 
-  local startTime=$(tesht.timestamp) failed=0
+  local startTime=$(TIMEFUNCNAME) failed=0
 
   for filename in ${FilenamesT[*]}; do
-    tesht.testFile $filename "$TestnameListT" || failed=1
+    tesht.testFile TIMEFUNCNAME $filename "$TestnameListT" || failed=1
   done
 
-  local endTime=$(tesht.timestamp)
+  local endTime=$(TIMEFUNCNAME)
   local d=$(( endTime - startTime ))
 
   local columns='%-28s    %8s\n'
@@ -98,7 +98,7 @@ Run="=== ${Yellow}RUN$Reset"
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
-  local filename=$1 testnames=( ${2:-} )
+  local timeFuncname=$1 filename=$2 testnames=( ${3:-} )
 
   local failed=0    # overall result -- fails if any individual run fails
   for testname in $(tesht.listTestnames $filename); do
@@ -107,7 +107,7 @@ tesht.testFile() {
     local columns='%-14s    %8s    %s'
     printf $columns $Run '' $testname
 
-    local startTime=$(tesht.timestamp)
+    local startTime=$($timeFuncname)
 
     local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
     local -i subtestTestCount=0 subtestPassCount=0
@@ -123,7 +123,7 @@ tesht.testFile() {
       rm -f $tmpname
     }
 
-    local endTime=$(tesht.timestamp)
+    local endTime=$($timeFuncname)
     local d=$(( endTime - startTime ))
 
     if (( subtestTestCount > 0 )); then
@@ -162,12 +162,9 @@ tesht.AssertGot() {
   local got=$1 want=$2
 
   [[ $got == "$want" ]] || {
-    cat <<END
-got does not match want:
-$(tesht.Diff "$got" "$want")
-use this line to update want to match this output:
-want=${got@Q}"
-END
+    echo "got does not match want:"
+    tesht.Diff "$got" "$want"
+    echo "use this line to update want to match this output:${NL}want=${got@Q}"
   }
 }
 
@@ -204,6 +201,22 @@ tesht.Inherit() {
   done
 }
 
+# tesht.Init sets up dependencies.
+tesht.Init() {
+  local timeFuncname=$1
+
+  tesht.Instantiate tesht.Main TIMEFUNCNAME $timeFuncname
+  tesht.Instantiate tesht.Run TIMEFUNCNAME $timeFuncname
+}
+
+tesht.Instantiate() {
+  local funcname=$1 token=$2 value=$3
+
+  local func=$(declare -f ${funcname}Template)
+  func=${func/Template}
+  eval "${func//$token/$value}"
+}
+
 # tesht.runSubtest runs the function `subtest` with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
@@ -212,7 +225,7 @@ tesht.Inherit() {
 # It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
 tesht.runSubtest() {
-  local testname=$1 mapname=$2
+  local timeFuncname=$1 testname=$2 mapname=$3
 
   local -n map=$mapname
   local testname=$testname/${map[name]}
@@ -231,9 +244,9 @@ tesht.runSubtest() {
   local columns='\r%-14s    %8s    %s'
   printf $columns $run '' $testname
 
-  local startTime=$(tesht.timestamp) rc
+  local startTime=$($timeFuncname) rc
   (subtest $mapname | tesht.tab) && rc=$? || rc=$?
-  local endTime=$(tesht.timestamp)
+  local endTime=$($timeFuncname)
 
   local duration
   printf -v duration '%dms' $(( endTime - startTime ))
@@ -254,14 +267,14 @@ tesht.runSubtest() {
 }
 
 # tesht.Run runs tesht.runSubtest on each test case.
-tesht.Run() {
+tesht.RunTemplate() {
   local name=$1
   shift
   local casenames=( "$@" )
 
   local failed=0 casename
   for casename in "${casenames[@]}"; do
-    tesht.runSubtest "$name" "$casename" || {
+    tesht.runSubtest TIMEFUNCNAME "$name" "$casename" || {
       (( $? == 128 )) && return 128 # fatal
       failed=1
     }
@@ -318,4 +331,5 @@ unset -v FilenamesT
 return 2>/dev/null
 set -euf
 
+tesht.Init tesht.timestamp
 tesht.Main "$TestnameListT" "$FilenameListT"
