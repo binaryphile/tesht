@@ -205,15 +205,18 @@ tesht.Inherit() {
 tesht.Init() {
   local timeFuncname=$1
 
-  tesht.Instantiate tesht.Main TIMEFUNCNAME $timeFuncname
-  tesht.Instantiate tesht.Run TIMEFUNCNAME $timeFuncname
+  tesht.Instantiate tesht.MainTemplate tesht.Main TIMEFUNCNAME $timeFuncname
+  tesht.Instantiate tesht.RunTemplate tesht.Run TIMEFUNCNAME $timeFuncname
 }
 
+# tesht.Instantiate creates a new function from a template function.
+# The template function contains a token to be replaced, representing a dependency.
+# The template is renamed to funcname and evaluated with the token substituted beforehand.
 tesht.Instantiate() {
-  local funcname=$1 token=$2 value=$3
+  local templatename=$1 funcname=$2 token=$3 value=$4
 
-  local func=$(declare -f ${funcname}Template)
-  func=${func/Template}
+  local func=$(declare -f $templatename)
+  func=${func/$templatename/$funcname}
   eval "${func//$token/$value}"
 }
 

@@ -4,14 +4,13 @@ NL=$'\n'
 # test_testFile tests that a test with two subtests is counted properly.
 test_tesht.testFile() {
   ## arrange
-  # mock out a nondeterministic input, the current time
-  tesht.timestamp() { return 0; }
+  timestamp() { return 0; }
 
   ## act
   # run the command in a subshell and check counting happened
   local rc got
   got=$(
-    tesht.testFile dummy_tests.bash test_dummy
+    tesht.testFile timestamp dummy_tests.bash test_RunTwoSubtests
     exit $TestCountT
   ) && rc=$? || rc=$?
 
