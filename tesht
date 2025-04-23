@@ -29,7 +29,7 @@ tesht.MainTemplate() {
   local startTime=$(TIMEFUNCNAME) failed=0
 
   for filename in ${FilenamesT[*]}; do
-    tesht.testFile TIMEFUNCNAME $filename "$TestnameListT" || failed=1
+    tesht.testFile $filename "$TestnameListT" || failed=1
   done
 
   local endTime=$(TIMEFUNCNAME)
@@ -49,7 +49,7 @@ tesht.MainTemplate() {
 
 # tesht.contains returns whether item is in array.
 tesht.contains() {
-  local -n ARRAY=$1
+  local -n ARRAY=$2
   [[ "$IFS${ARRAY[*]}$IFS" == *"$IFS$2$IFS"* ]]
 }
 
@@ -94,53 +94,62 @@ Fatal="--- ${Red}FATAL$Reset"
 Pass="--- ${Green}PASS$Reset"
 Run="=== ${Yellow}RUN$Reset"
 
+# tesht.test tests the named function.
+tesht.testTemplate() {
+  local testname=$1
+
+  local columns='%-14s    %8s    %s'
+  printf $columns $Run '' $testname
+
+  local startTime=$(TIMEFUNCNAME)
+
+  local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
+  local -i subtestTestCount=0 subtestPassCount=0
+  (
+    source $filename
+    $testname
+    rc=$PIPESTATUS
+    [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
+    exit $rc
+  ) && rc=$? || rc=$?
+  [[ -e $tmpname ]] && {
+    IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname
+    rm -f $tmpname
+  }
+
+  local endTime=$(TIMEFUNCNAME)
+  local d=$(( endTime - startTime ))
+
+  if (( subtestTestCount > 0 )); then
+    TestCountT+=$subtestTestCount
+    PassCountT+=$subtestPassCount
+  else
+    TestCountT+=1
+  fi
+
+  columns='\r%-28s    %8s    %s\n'
+  case $rc in
+    0 )
+      printf $columns $Pass $(tesht.duration $d) $testname
+      (( subtestTestCount == 0 )) && PassCountT+=1
+      ;;
+    128 ) printf $columns $Fatal '' $testname; return 128 ;;
+    *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1 ;;
+  esac
+}
+
 # tesht.testFile runs any test functions in file.
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
-  local timeFuncname=$1 filename=$2 testnames=( ${3:-} )
+  local filename=$1 requests=( ${2:-} )
 
   local failed=0    # overall result -- fails if any individual run fails
-  for testname in $(tesht.listTestnames $filename); do
-    (( ${#testnames[*]} == 0 )) || tesht.contains testnames $testname || continue
-
-    local columns='%-14s    %8s    %s'
-    printf $columns $Run '' $testname
-
-    local startTime=$($timeFuncname)
-
-    local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
-    local -i subtestTestCount=0 subtestPassCount=0
-    (
-      source $filename
-      $testname
-      rc=$PIPESTATUS
-      [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
-      exit $rc
-    ) && rc=$? || rc=$?
-    [[ -e $tmpname ]] && {
-      IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname
-      rm -f $tmpname
-    }
-
-    local endTime=$($timeFuncname)
-    local d=$(( endTime - startTime ))
-
-    if (( subtestTestCount > 0 )); then
-      TestCountT+=$subtestTestCount
-      PassCountT+=$subtestPassCount
-    else
-      TestCountT+=1
-    fi
-
-    columns='\r%-28s    %8s    %s\n'
-    case $rc in
-      0 )
-        printf $columns $Pass $(tesht.duration $d) $testname
-        (( subtestTestCount == 0 )) && PassCountT+=1
-        ;;
-      128 ) printf $columns $Fatal '' $testname; return 128 ;;
-      *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1 ;;
+  local testsInFile=( $(tesht.listTestnames $filename) )
+  for testname in ${testsInFile[*]}; do
+    case ${#requests[*]} in
+      0 ) tesht.test $testname;;
+      * ) tesht.contains $testname requests && tesht.test $testname
     esac
   done
 
@@ -206,7 +215,7 @@ tesht.Init() {
   local timeFuncname=$1
 
   tesht.Instantiate tesht.MainTemplate tesht.Main TIMEFUNCNAME $timeFuncname
-  tesht.Instantiate tesht.RunTemplate tesht.Run TIMEFUNCNAME $timeFuncname
+  tesht.Instantiate tesht.testTemplate tesht.test TIMEFUNCNAME $timeFuncname
 }
 
 # tesht.Instantiate creates a new function from a template function.
@@ -270,14 +279,14 @@ tesht.runSubtest() {
 }
 
 # tesht.Run runs tesht.runSubtest on each test case.
-tesht.RunTemplate() {
+tesht.Run() {
   local name=$1
   shift
   local casenames=( "$@" )
 
   local failed=0 casename
   for casename in "${casenames[@]}"; do
-    tesht.runSubtest TIMEFUNCNAME "$name" "$casename" || {
+    tesht.runSubtest "$name" "$casename" || {
       (( $? == 128 )) && return 128 # fatal
       failed=1
     }
