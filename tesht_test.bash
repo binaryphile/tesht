@@ -1,24 +1,58 @@
+# Because we are being run by tesht, it is already loaded and doesn't need to be sourced.
 NL=$'\n'
 
-# test_testFile tests that a test with a subtest is counted properly.
-# Subtests are run with tesht.Run.
-test_tesht.testFile() {
+# test_tesht.test tests that the test function tests.
+test_tesht.test() {
   ## arrange
-  # mock out a nondeterministic input, the current time
-  tesht.timestamp() { return 0; }
+  timestamp() { return 0; }
+  tesht.Init timestamp
 
-  ## act
-  # run the command in a subshell and check counting happened
-  local rc got
-  got=$(
-    tesht.testFile dummy_tests.bash test_dummy
-    exit $TestCountT
-  ) && rc=$? || rc=$?
+  local -A case1=(
+    [name]='count two subtests'
+    [funcname]='runTwoSubtests'
+    [want]=1  # Should be 2, but we'll make it fail first
+  )
 
-  ## assert
-  # assert counting was done
-  (( rc == 2 )) || {
-    echo "${NL}tesht.testFile: TestCountT is wrong. want: 2, got: $TestCountT$NL"
-    return 1
+  local -A case2=(
+    [name]='count one subtest'
+    [funcname]='runOneSubtest'
+    [want]=2  # Should be 1, but we'll make it fail first
+  )
+
+  # subtest runs each test case
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    eval "$(tesht.Inherit "$casename")"
+
+    ## act
+    local rc got
+    got=$(
+      tesht.test "$funcname"
+      exit $TestCountT
+    ) && rc=$? || rc=$?
+
+    ## assert
+    (( rc == want )) || {
+      echo "${NL}TestCountT is wrong. want: $want, got: $rc$NL"
+      return 1
+    }
   }
+
+  tesht.Run test_tesht.test "${!case@}"
+}
+
+# Test functions for different scenarios
+runTwoSubtests() {
+  subtest() { :; }                  # necessary, always passes
+  local -A case=([name]=slug)       # name is required in this map
+  tesht.Run runTwoSubtests case     # it's ok to call tesht.Run with the same subtest twice
+  tesht.Run runTwoSubtests case
+}
+
+runOneSubtest() {
+  subtest() { :; }
+  local -A case=([name]=slug)
+  tesht.Run runOneSubtest case
 }

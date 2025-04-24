@@ -1,357 +1,221 @@
-# tesht - table-driven testing for Bash
+# tesht -- Table-Driven Testing for Bash
 
 ![version](assets/version.svg) ![lines](assets/lines.svg) ![tests](assets/tests.svg) ![coverage](assets/coverage.svg)
 
-**tesht** is a command-line tool for testing Bash code.  By itself, the command `tesht`
-searches for files in the current directory ending in `_test.bash`.  It runs any test
-functions it finds, functions having names starting with `test_`.  Each function and its
-success or failure is then reported in a succinct format, along with timing measurements.
-Test output is suppressed unless the test failed, in which case the test output is shown as
-well.
+**tesht** is a lightweight Bash testing framework. It finds test files and functions
+automatically and runs them with formatted output and timing information. In addition to the
+usual solitary tests, tesht adds Go-inspired table-driven tests for effective test code
+reuse.
+
+![tesht output](assets/tesht.gif)
+*tesht output*
+
+--------------------------------------------------------------------------------------------
 
 ## Features
 
-- simple naming conventions - e.g. `test_myfunc()` in `myfunc_test.bash`
-- output suppression - only see function output when tests fail
-- reporting - individual and overall test results and timing
+- Automatic discovery of test files ending in `_test.bash` and test functions starting with
+  `test_`
+- Output suppression
+- Isolation of tests from one another since tests are run in separate subshells
+- Time tracking and reporting per test and for the full suite
+- Subtest support via `tesht.Run` for table-driven testing
+- Helpers for dependencies such as an HTTP server or filesystem access
+
+--------------------------------------------------------------------------------------------
 
 ## Usage
 
-```bash
-tesht [TEST]
-
-With no arguments, all tests in the current directory are run.
-
-If TEST is supplied, it is the name of a test function, e.g. `test_myfunc`.
-It is run by itself.
-
-There is not yet a way to run individual subtests.
+``` bash
+tesht [test_function]
 ```
 
-## Example
+- With **no arguments**, it finds and runs all `test_*` functions in `*_test.bash` files in
+    the current directory
 
-Tests should typically follow the triple-A pattern of [Arrange, Act, Assert]:
+- With a **test function name**, it finds and runs just that
+    function (including subtests)
 
-[Arrange, Act, Assert]: https://automationpanda.com/2020/07/07/arrange-act-assert-a-pattern-for-writing-good-tests/
+--------------------------------------------------------------------------------------------
 
-- *arrange* the necessary test dependencies, such as a temporary directory as a workspace
-- *act* with the system-under-test, i.e. the function we are testing
-- *assert* what the resulting state of affairs should be and flag the differences
+## Basic Test Example
 
-The following test function could appear in a file named `ln_test.bash`:
+**echo_test.bash**:
 
-```bash
-# test_ln tests the shell's `ln` symlink command.
-# A temporary directory is created as a workspace and is removed afterward.
-# The test makes a symlink in the workspace with `ln -sf`.
-test_ln() {
-  ## arrange
+``` bash
+# test_echo tests the behavior of the echo builtin.
+test_echo() {
+  ## act on the system under test
+  got=$(echo hello)
 
-  # make the temporary directory and change to it as working directory
-  dir=$(mktemp -d /tmp/tesht.XXXXXX)                # mktemp finds a safe name and makes the directory
-  [[ $dir == /tmp/tesht.* ]] || {                   # ensure we got a valid name
-    echo "ln fatal: couldn't make temp directory"   # dependency setup errors are fatal
-    return 1
-  }
-  trap "rm -rf $dir" EXIT   # always clean up
-  cd $dir
-
-  ## act
-
-  # Run the command and capture the output in got and result code in rc.
-  # In this case, we are linking to the non-existent target.txt.
-  # We're using -f which means that's ok and link.txt should get made.
-  got=$(ln -sf target.txt link.txt 2>&1)
-  rc=$?
-
-  ## assert
-
-  # assert no error
-  [[ $rc == 0 ]] || {
-    echo -e "ln: error = $rc, want: 0\n$got"
-    return 1
-  }
-
-  # assert that the symlink was made
-  [[ -L link.txt ]] || {
-    echo -e "ln: expected link.txt to be symlink\n$got"
-    return 1
-  }
+  ## assert that the result was what we wanted
+  tesht.AssertGot "$got" hello
 }
 ```
 
-Some things to notice:
+Output:
 
-- the filename and function name follow the required naming convention
-- the workspace directory, a dependency of the test, is created in the "arrange" section
-- it is cleaned up by a trap, which is a deferred event triggered when the test completes
-- output suppression is handled by the test -- `got` captures output
-- assertions are normal Bash tests that output a message on error and return 1
-- `got` is shown by the error branches of assertions
-
-If this test passes, the `ln` command returned success and the link existed, because the
-assertions would have failed otherwise.
-
-Now run the command `tesht` in the same folder as `ln_test.bash`:
-
-```bash
+``` bash
 $ tesht
-=== RUN   test_ln
---- PASS: test_ln (12 ms)
-PASS (21 ms)
+--- PASS    8ms     test_echo
+PASS        11ms
+1/1
 ```
 
-This shows us when the test starts and finishes, with timing.  The final PASS applies to the
-entire test suite.
+`tesht.AssertGot` compares `got` and `want`.  If they are unequal, it outputs a diff of the
+two. Also, its return code reflects whether the assertion passed.  In our code here, that
+becomes the return code of `test_echo` as well since `tesht.AssertGot` is the last command
+called by the function. That means its return value is the return value of the test as a
+whole.
 
-Had the `ln` command errored, it would look like this:
+--------------------------------------------------------------------------------------------
+
+## Writing Testable Code
+
+Scripts are written to be run, not tested.  Tesht is meant to test functions within a
+script, not the script itself.
+
+First, that means you need to have functions available to test.  If you are not writing
+functions in your code, tesht won't do anything for you.
+
+Second, that means we need a way to load functions from a script without actually running
+it.
+
+As an example, imagine we have a script with a function, `greet`, that greets a particular
+name:
+
+**greet**:
 
 ```bash
-=== RUN   test_ln
-ln: error = 1, want: 0
+#!/usr/bin/env bash
 
---- FAIL: test_ln (9 ms)
-FAIL (18 ms)
+greet() { echo "Hello, $1!"; }
+
+read -p 'Your name: ' name
+greet "$name"
 ```
 
-This follows the same order of events as the successful test, this time the assertion
-triggers its error message, and the overall result is now FAIL.  *Any* individual test
-failure also fails the suite, although it won't stop further tests from also being run.
-
-## Table-driven tests
-
-`test_ln` is a self-contained test that takes no arguments, which works well for a one-shot
-test.  However, sometimes you need variations on a test -- a different parameter such
-as a filename, but the rest of the process the same as the original test.  The table-driven
-approach can help in this case.
-
-Table tests are just another way of saying "parameterized tests".  Table tests are the same
-test as the one-shot version except they accept arguments and they get a little help from
-tesht.
-
-Quoting from the [Go wiki]:
-
-[Go wiki]: https://go.dev/wiki/TableDrivenTests
-
-> Writing good tests is not trivial, but in many situations a lot of ground can be covered
-> with table-driven tests: Each table entry is a complete test case with inputs and expected
-> results, and sometimes with additional information such as a test name to make the test
-> output easily readable. If you ever find yourself using copy and paste when writing a
-> test, think about whether refactoring into a table-driven test or pulling the copied code
-> out into a helper function might be a better option.
->
-> Given a table of test cases, the actual test simply iterates through all table entries and
-> for each entry performs the necessary tests. The test code is written once and amortized
-> over all table entries, so it makes sense to write a careful test with good error
-> messages.
-
-A table-driven test begins as a regular test function, following the usual naming convention.
-However, rather than arrange, act and assert, the test function instead defines test cases
-and a subtest (a function) that expects to receive one of test case at a time.
-
-- the test declares test cases as maps (associative arrays) with the subtest's required
-  paramaters
-- the test defines the subtest function
-- the test loops over the test cases, feeding them to the subtest as arguments
-
-The subtest performs the usual arrange, act and assert pattern.  This requires minor support
-from tesht, in the form of the `t.run` function (the `t.` is for `tesht`).  `t.run` runs the
-subtest, handling report formatting and timing.  Its signature is:
+**greet_test.bash**:
 
 ```bash
-t.run testcasename
-```
+source ./greet
 
-where `subtest` is the name of the subtest function (usually just `subtest`) and
-`testcasename` is the name of the associative array containing the test case.
-
-### Table-driven test example
-
-Let's expand the `test_ln` to a table-driven test by adding a test case.  This case will
-address what should happen if the command fails with an error.  For example, `ln -sf` does
-and should fail if the directory of the link is not writable.
-
-Before looking at the test, there are a couple of things to know:
-
-- test cases are maps (associative arrays) defined with `local -A`
-- test cases require the "name" key to display in the results
-
-Other parameters are free-form.  Test cases are not even required to all contain the same
-keys; it just depends on how the subtest is written.
-
-Let's look at the test before the subtest has been fully defined:
-
-```bash
-# Now, table-driven!
-test_ln() {
-  local -A testcase1=(
-    [name]="create a link"
-    [dir]='$(mktemp -d /tmp/tesht.XXXXXX)'
-  )
-
-  local -A testcase2=(
-    [name]="fail when the link's directory is not writable"
-    [wanterr]=1
-  )
-
-  # define subtest -- subtest runs each test case
-  subtest() {
-    # TBD
-  }
-
-  # loop through the test cases
-  failed=0
-  for casename in ${@case}; do
-    t.run $casename || failed=1
-  done
-
-  return $failed
+test_greet() {
+  ...
 }
 ```
 
-Here the two test case maps form the "table".  Notice that the two test cases are not
-defined the same way.  The link creation test case only specifies a workspace directory,
-while the failure test only specifies `wanterr`.  When writing a failure test, it is typical
-to use `wanterr` to specify the result code we expect.  The subtest is written so that the
-presence of `wanterr` tells it not to test as if the command had succeeded but instead to
-only look at the error result.
+The problem here is that we need to source the `greet` script to test it, however it runs
+when it is sourced.  We just want to test the `greet` function, not run the `greet` script.
 
-To create the subtest, we're going to create a function that takes the name of a test case
-map.  The keys of that map are the test case parameters, which we are going to finesse into
-regular variables so that the test is easier to read.  `$dir` is easier to read and write
-than `${testcase[dir]}`.  The test helper `t.inherit` creates a string containing
-declarations that create variables from the keys in a map so we can write clearer
-expressions.  We create them by `eval`ing the result.
+In order to prevent this, structure your script so that it can stop after functions are
+defined but before the script executes them.
 
-We create the directory with `mktemp`, and don't want to create the directory until the test
-is actually running, so we can't evaluate mktemp in the map declaration -- it has to wait.
-So we delay the expansion with `mktemp` by quoting it in the map and then eval'ing that
-value when the subtest detects its presence with a `-v` variable existence test.
-
-Here's the test, now with the subtest:
+**greet**:
 
 ```bash
-test_ln() {
-  local -A testcase1=(
-    [name]="create a link"
+#!/usr/bin/env bash
+
+greet() { echo "Hello, $1!"; }
+
+return 2>/dev/null
+
+read -p 'Your name: ' name
+greet "$name"
+```
+
+Now the script's `greet` function can be tested.  We've added a `return` statement after the
+function definitions and before the script starts using them.  When the script is sourced,
+the sourcing ends at the return, leaving the functions defined but not running the rest of
+the code.  By contrast, when the script is run from the command line, `return` doesn't make
+sense and errors, and the script keeps going.  We swallow the error message with
+`/dev/null`.
+
+--------------------------------------------------------------------------------------------
+
+## Table-Driven Tests
+
+Table-driven tests reuse subtest logic across test cases.
+
+Here is a test file with a test and two subtests.
+
+**greet_test.bash**:
+
+``` bash
+# test_greet tests that greet outputs a greeting message on stdout.
+test_greet() {
+  # tesht.Run runs subtest (defined below) on each of these cases.
+  local -A case1=(
+    [name]='greet Alice on stdout'
+    [command]='greet Alice'
+    [want]='Hello, Alice!'
+  )
+  local -A case2=(
+    [name]='greet Bob on stdout'
+    [command]='greet Bob'
+    [want]='Hello, Bob!'
   )
 
-  local -A testcase2=(
-    [name]="fail when the link's directory is not writable"
-    [wanterr]=1
-  )
-
-  # define subtest -- subtest runs each test case
+  # Define a subtest that works with an individual case.
+  # Case values are turned into local variables with tesht.Inherit.
   subtest() {
-    testcase=$1
-    eval "$(t.inherit $testcase)"   # now testcase keys are variables
+    local casename=$1
 
     ## arrange
-
-    # temporary directory
-    dir=$(mktemp -d /tmp/tesh.XXXXXX)
-    [[ $dir == /tmp/tesht.* ]] || {                   # ensure we got a valid name
-      echo "ln fatal: couldn't make temp directory"   # dependency setup errors are fatal
-      return 1
-    }
-    trap "rm -rf $dir" EXIT   # always clean up
-    cd $dir
+    eval "$(tesht.Inherit "$casename")"
 
     ## act
-
-    got=$(ln -sf target.txt link.txt 2>&1)
-    rc=$?
+    got=$(eval "$command")  # this case's command is in $command because of tesht.Inherit
 
     ## assert
-
-    # check for error-wanted cases first
-    [[ -v wanterr ]] && {
-      [[ $rc == $wanterr ]] && return  # great!
-      echo -e "    ln/$name error = $rc, want: $wanterr\n$got"
-      return 1
-    }
-
-    # assert no error
-    [[ $rc == 0 ]] || {
-      echo -e "    ln/$name error = $rc, want: 0\n$got"
-      return 1
-    }
-
-    # assert that the symlink was made
-    [[ -L link.txt ]] || {
-      echo -e "    ln/$name expected link.txt to be symlink\n$got"
-      return 1
-    }
+    tesht.AssertGot "$got" "$want"  # same for $want
   }
 
-  # loop through the test cases
-  failed=0
-  for testcasename in testcase{1,2}; do
-    t.run subtest $testmapname || failed=1
-  done
-
-  return $failed
+  tesht.Run test_greet "${!case@}"
 }
 ```
 
-The subtest looks an awful lot like the original test, with a couple differences.  First,
-there's the bit about expanding map keys into variables.  Also there is the branch to handle
-the kind of test cases that want error codes (`[[ -v wanterr ]]`).
+Output:
 
-With that branch, we return success so long as the error code is the one we wanted.
-Otherwise, we fail the subtest like a normal assertion.  Note that the output now includes
-the subtest name and is indented to match tesht's report format.
-
-## `t.diff`
-
-tesht offers a few functions as we've seen.  `t.diff` is a helper function to show
-differences in command output vs what was expected.  It also makes some special characters
-like tab visible.  The output is from the actual diff command, so use the man page to
-understand the details of the format.
-
-Testing command output is a frequent use case, so here's a simple test for a multline
-message to illustrate the output:
-
-```bash
-test_multiline_message() {
-  want="Hello,
-world!"
-
-  # this message contains a tab character
-  message="Hello,
-world	!"
-
-  ## arrange -- nothing to do here
-  ## act
-  got=$(echo "$message")    # variables with newlines require quotes when expanding
-
-  ## assert
-  [[ $got == "$want" ]] || {
-    echo -e "multiline_message got didn't match want\n$(t.diff "$got" "$want")"
-    return 1
-  }
-}
+``` bash
+  --- PASS  12ms    test_greet/greet Alice
+  --- PASS  11ms    test_greet/greet Bob
+--- PASS    25ms    test_greet
+PASS 29 ms
+1/1
 ```
 
-This gives:
+--------------------------------------------------------------------------------------------
 
-```bash
-=== RUN   test_multiline_message
-multiline_message got didn't match want
-2c2
-< world^I!
----
-> world!
---- FAIL: test_multiline_message (4 ms)
-FAIL (9 ms)
+## Helpers
+
+### tesht.Inherit
+
+Extracts the keys and values in an associative array into local variables named by key.
+Useful for converting test case fields into variables you can work with.
+
+``` bash
+eval "$(tesht.Inherit casename)"
 ```
 
-## Summary
+where `casename` is the name of the associative array variable.
 
-That's a description of the basic capabilities of tesht, which is a fairly simple wrapper
-around functionality in your own tests.  Knowing how to write the tests is actually the key
-to understanding how to use tesht.  Hopefully this readme gives a good basis to start from.
+### tesht.Diff
 
-Table-driven tests in Go follow other useful conventions as well, such as parameterizing
-dependencies with the `fields` struct.  Understanding how they work can inform your tesht
-testing.  I encourage you to work with them in Go, time permitting.
+Outputs a unified diff of actual and expected output. Tabs in output are shown as `^I`.
+
+`tesht.AssertGot` employs `tesht.Diff` internally to output an error message, but you may
+find it useful for other purposes as well.
+
+``` bash
+if [[ $got != "$want" ]]; then
+  tesht.Diff "$got" "$want"
+  return 1
+fi
+```
+
+--------------------------------------------------------------------------------------------
+
+## License
+
+MIT License. See LICENSE for full terms.
