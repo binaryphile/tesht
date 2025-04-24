@@ -23,6 +23,7 @@ declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
+# This template is instantiated with tesht.Instantiate to introduce TIMEFUNCNAME.
 tesht.MainTemplate() {
   local TestnameListT=$1 FilenamesT=( $2 )
 
@@ -95,6 +96,7 @@ Pass="--- ${Green}PASS$Reset"
 Run="=== ${Yellow}RUN$Reset"
 
 # tesht.test tests the named function.
+# This template is instantiated with tesht.Instantiate to introduce TIMEFUNCNAME.
 tesht.testTemplate() {
   local testname=$1
 
@@ -254,6 +256,7 @@ tesht.Run() {
 # It returns an error result code if there was failure.
 # It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
+# This template is instantiated with tesht.Instantiate to introduce TIMEFUNCNAME.
 tesht.runSubtestTemplate() {
   local testname=$1 mapname=$2
 

@@ -29,6 +29,6 @@ test_tesht.test() {
 runTwoSubtests() {
   subtest() { :; }                  # necessary, always passes
   local -A case=([name]=slug)       # name is required in this map
-  tesht.Run runTwoSubTests case1    # it's ok to call tesht.Run with the same subtest twice
-  tesht.Run runTwoSubTests case1
+  tesht.Run runTwoSubtests case     # it's ok to call tesht.Run with the same subtest twice
+  tesht.Run runTwoSubtests case
 }
