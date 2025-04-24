@@ -11,7 +11,7 @@ test_tesht.test() {
   # run the command in a subshell and check counting happened
   local rc got
   got=$(
-    tesht.test testdummy_RunTwoSubtests
+    tesht.test runTwoSubtests
     exit $TestCountT
   ) && rc=$? || rc=$?
 
@@ -26,9 +26,9 @@ test_tesht.test() {
 # A dummy test run by test_tesht.test.
 # The point of this test is not to pass or fail but to simply run
 # two subtest cases so they may be counted in the results.
-testdummy_RunTwoSubtests() {
-  subtest() { :; }                      # necessary, always passes
-  local -A case=([name]=slug)           # name is required in this map
-  tesht.Run test_RunTwoSubTests case1   # it's ok to call tesht.Run with the same subtest twice
-  tesht.Run test_RunTwoSubTests case1
+runTwoSubtests() {
+  subtest() { :; }                  # necessary, always passes
+  local -A case=([name]=slug)       # name is required in this map
+  tesht.Run runTwoSubTests case1    # it's ok to call tesht.Run with the same subtest twice
+  tesht.Run runTwoSubTests case1
 }

@@ -216,6 +216,7 @@ tesht.Init() {
 
   tesht.Instantiate tesht.MainTemplate tesht.Main TIMEFUNCNAME $timeFuncname
   tesht.Instantiate tesht.testTemplate tesht.test TIMEFUNCNAME $timeFuncname
+  tesht.Instantiate tesht.runSubtestTemplate tesht.runSubtest TIMEFUNCNAME $timeFuncname
 }
 
 # tesht.Instantiate creates a new function from a template function.
@@ -229,6 +230,23 @@ tesht.Instantiate() {
   eval "${func//$token/$value}"
 }
 
+# tesht.Run runs tesht.runSubtest on each test case.
+tesht.Run() {
+  local name=$1
+  shift
+  local casenames=( "$@" )
+
+  local failed=0 casename
+  for casename in "${casenames[@]}"; do
+    tesht.runSubtest "$name" "$casename" || {
+      (( $? == 128 )) && return 128 # fatal
+      failed=1
+    }
+  done
+
+  return $failed
+}
+
 # tesht.runSubtest runs the function `subtest` with mapname as an argument.
 # mapname is the name of an associative array in an outer scope
 # holding at least the key "name".
@@ -236,8 +254,8 @@ tesht.Instantiate() {
 # It returns an error result code if there was failure.
 # It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
-tesht.runSubtest() {
-  local timeFuncname=$1 testname=$2 mapname=$3
+tesht.runSubtestTemplate() {
+  local testname=$1 mapname=$2
 
   local -n map=$mapname
   local testname=$testname/${map[name]}
@@ -256,9 +274,9 @@ tesht.runSubtest() {
   local columns='\r%-14s    %8s    %s'
   printf $columns $run '' $testname
 
-  local startTime=$($timeFuncname) rc
+  local startTime=$(TIMEFUNCNAME) rc
   (subtest $mapname | tesht.tab) && rc=$? || rc=$?
-  local endTime=$($timeFuncname)
+  local endTime=$(TIMEFUNCNAME)
 
   local duration
   printf -v duration '%dms' $(( endTime - startTime ))
@@ -276,23 +294,6 @@ tesht.runSubtest() {
   esac
 
   return $rc
-}
-
-# tesht.Run runs tesht.runSubtest on each test case.
-tesht.Run() {
-  local name=$1
-  shift
-  local casenames=( "$@" )
-
-  local failed=0 casename
-  for casename in "${casenames[@]}"; do
-    tesht.runSubtest "$name" "$casename" || {
-      (( $? == 128 )) && return 128 # fatal
-      failed=1
-    }
-  done
-
-  return $failed
 }
 
 # tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
