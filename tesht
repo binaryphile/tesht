@@ -21,6 +21,17 @@ IFS=$'\n'
 
 declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
+Green=$'\033[38;5;82m'
+Red=$'\033[38;5;196m'
+Yellow=$'\033[38;5;220m'
+
+Reset=$'\033[0m'
+
+Fail="${Red}FAIL$Reset"
+Fatal="${Red}FATAL$Reset"
+Pass="${Green}PASS$Reset"
+Run="${Yellow}RUN$Reset"
+
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 # This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
@@ -36,35 +47,33 @@ tesht.MainTemplate() {
   local endTime=$(TIMEFUNCNAME)
   local d=$(( endTime - startTime ))
 
-  local columns='%-28s    %8s\n'
+  local columns='%s\t\t%s\n'
   if (( failed )); then
-    printf $columns "${Red}FAIL$Reset" $(tesht.duration $d)
+    printf $columns $Fail $(tesht.duration $d)
   else
-    printf $columns "${Green}PASS$Reset" $(tesht.duration $d)
+    printf $columns $Pass $(tesht.duration $d)
   fi
 
   echo $PassCountT/$TestCountT
 }
 
-# tesht.Setup sets up dependencies.
-tesht.Setup() {
+# tesht.duration prints a duration.
+tesht.duration() { printf '%dms' $1; }
+
+# tesht.in returns whether item is in array.
+tesht.in() {
+  local -n ARRAY=$1
+  [[ "$IFS${ARRAY[*]}$IFS" == *"$IFS$2$IFS"* ]]
+}
+
+# tesht.InitModule sets up dependencies.
+tesht.InitModule() {
   local timeFuncname=$1
 
   tesht.newFunc tesht.Main tesht.MainTemplate TIMEFUNCNAME $timeFuncname
   tesht.newFunc tesht.test tesht.testTemplate TIMEFUNCNAME $timeFuncname
   tesht.newFunc tesht.runSubtest tesht.runSubtestTemplate TIMEFUNCNAME $timeFuncname
 }
-
-## internal functions
-
-# tesht.contains returns whether item is in array.
-tesht.contains() {
-  local -n ARRAY=$2
-  [[ "$IFS${ARRAY[*]}$IFS" == *"$IFS$2$IFS"* ]]
-}
-
-# tesht.duration prints a duration.
-tesht.duration() { printf '%dms' $1; }
 
 # tesht.listTestnames lists the name of any functions in $1.
 # Valid function names begin the line with "test_",
@@ -84,50 +93,37 @@ tesht.newFunc() {
   eval "${func//$token/$value}"
 }
 
-# tesht.tab indents each line of input with a tab.
-tesht.tab() {
-  local line
-  while read -r line; do
-    printf '\t%s\n' $line
-  done
-}
-
-Green=$'\033[38;5;82m'
-Red=$'\033[38;5;196m'
-Yellow=$'\033[38;5;220m'
-
-Reset=$'\033[0m'
-
-Fail="--- ${Red}FAIL$Reset"
-Fatal="--- ${Red}FATAL$Reset"
-Pass="--- ${Green}PASS$Reset"
-Run="=== ${Yellow}RUN$Reset"
-
 # tesht.test tests the named function.
 # This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
 tesht.testTemplate() {
   local testname=$1
 
-  local columns='%-14s    %8s    %s'
-  printf $columns $Run '' $testname
-
   local startTime=$(TIMEFUNCNAME)
 
   local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
-  local -i subtestTestCount=0 subtestPassCount=0
+  local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
   (
     source $filename
+
+    [[ $(declare -f $testname) == *tesht.Run* ]] && hasSubtests=1
+
+    local columns='=== %s\t\t\t%s'
+    (( hasSubtests )) || printf $columns $Run $testname
+
     $testname && rc=$? || rc=$?
-    [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
+    (( hasSubtests )) && echo "$subtestTestCount $subtestPassCount" >$tmpname
     exit $rc
   ) && rc=$? || rc=$?
+
   [[ -e $tmpname ]] && {
+    hasSubtests=1
     IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname
     rm -f $tmpname
   }
 
   local endTime=$(TIMEFUNCNAME)
   local d=$(( endTime - startTime ))
+  local duration=$(tesht.duration $d)
 
   if (( subtestTestCount > 0 )); then
     TestCountT+=$subtestTestCount
@@ -135,15 +131,14 @@ tesht.testTemplate() {
   else
     TestCountT+=1
   fi
-
-  columns='\r%-28s    %8s    %s\n'
+  local columns='\r--- %s\t%s\t%s\n'
   case $rc in
     0 )
-      printf $columns $Pass $(tesht.duration $d) $testname
+      (( hasSubtests)) || printf $columns $Pass $duration $testname
       (( subtestTestCount == 0 )) && PassCountT+=1
       ;;
-    128 ) printf $columns $Fatal '' $testname; return 128 ;;
-    *   ) printf $columns $Fail '' $Yellow$testname$Reset; failed=1 ;;
+    128 ) (( hasSubtests)) || printf $columns $Fatal $duration $testname; return 128 ;;
+    *   ) (( hasSubtests)) || printf $columns $Fail $duration $Yellow$testname$Reset; failed=1 ;;
   esac
 }
 
@@ -158,7 +153,7 @@ tesht.testFile() {
   for testname in ${testsInFile[*]}; do
     case ${#requests[*]} in
       0 ) tesht.test $testname;;
-      * ) tesht.contains $testname requests && tesht.test $testname
+      * ) tesht.in requests $testname && tesht.test $testname
     esac
   done
 
@@ -179,11 +174,20 @@ tesht.timestamp() {
 tesht.AssertGot() {
   local got=$1 want=$2
 
-  [[ $got == "$want" ]] || {
-    echo "got does not match want:"
-    tesht.Diff "$got" "$want"
-    echo "use this line to update want to match this output:${NL}want=${got@Q}"
-  }
+  [[ $got == "$want" ]] && return
+
+  cat <<END
+
+
+got does not match want:
+$(tesht.Diff "$got" "$want")
+
+use this line to update want to match:
+    want=${got@Q}
+
+END
+
+  return 1
 }
 
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
@@ -202,6 +206,50 @@ tesht.MktempDir() {
 
   [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
   echo $dir
+}
+
+# tesht.portIsInUse detects whether port is already in use.
+tesht.portIsInUse() {
+  local pid rc
+  command -v lsof &>/dev/null && {
+    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
+    return $rc
+  }
+
+  local func=$(declare -f $templatename)
+  func=${func/$templatename/$funcname}
+  eval "${func//$token/$value}"
+}
+
+# tesht.tab indents each line of input with a tab.
+tesht.tab() {
+  local line
+  while read -r line; do
+    printf '\t%s\n' $line
+  done
+}
+
+# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
+# It waits until the server is ready before returning.
+tesht.StartHttpServer() {
+  local port=${1:-8000}
+
+  tesht.portIsInUse $port && return 1
+
+  # start the http server, redirect stdout so it doesn't hang
+  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
+  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
+
+  for duration in 0.1 0.2 0.4 0.8; do
+    sleep $duration
+    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
+    (( rc == 0 )) && break
+  done
+
+  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
+
+  return $rc
 }
 
 # tesht.portIsInUse detects whether port is already in use.
@@ -248,16 +296,24 @@ tesht.StartHttpServer() {
 
 ## table test helpers
 
+tesht.declareVar() {
+  local name=$1 value=$2
+  [[ $name == *s && $value == '('*')' ]] &&
+    echo "declare -a $name=${value@Q}" ||
+    echo "declare $name=${value@Q}"
+}
+
 # tesht.Inherit returns an eval'able set of variable assignments from a map.
 # The map is an associative array variable in the outer scope named by mapname.
 # It is a test helper that makes it simple to work with the keys of the testmap.
-# Inspired by nix's Inherit keyword.
+# Inspired by nix's inherit keyword.
 tesht.Inherit() {
-  local mapname=$1
-  local -n map=$mapname
-  local key
-  for key in ${!map[*]}; do
-    echo "declare $key=${map[$key]@Q}"
+  local MAPNAME=$1
+  local -n MAP=$MAPNAME
+
+  local KEY
+  for KEY in ${!MAP[*]}; do
+    tesht.declareVar $KEY ${MAP[$KEY]}
   done
 }
 
@@ -298,13 +354,13 @@ tesht.runSubtestTemplate() {
 
   local reset=$'\033[0m'
 
-  local fail="    --- ${red}FAIL$reset"
-  local fatal="    --- ${red}FATAL$reset"
-  local pass="    --- ${green}PASS$reset"
-  local run="    === ${yellow}RUN$reset"
+  local fail="${red}FAIL$reset"
+  local fatal="${red}FATAL$reset"
+  local pass="${green}PASS$reset"
+  local run="${yellow}RUN$reset"
 
-  local columns='\r%-14s    %8s    %s'
-  printf $columns $run '' $testname
+  local columns='=== %s\t\t\t%s'
+  printf $columns $run $testname
 
   local startTime=$(TIMEFUNCNAME) rc
   (subtest $mapname) && rc=$? || rc=$?
@@ -314,15 +370,15 @@ tesht.runSubtestTemplate() {
   printf -v duration '%dms' $(( endTime - startTime ))
 
   subtestTestCount+=1   # locally declared by caller
-  columns='\r%-28s    %8s    %s\n'
+  columns='\r--- %s\t%s\t%s\n'
   case $rc in
     0   )
       printf $columns $pass $duration $testname
       subtestPassCount+=1   # locally declared by caller
       ;;
-    128 ) printf $columns $fatal '' $testname;;
+    128 ) printf $columns $fatal $duration $testname;;
 
-    *   ) printf $columns $fail '' $yellow$testname$reset;;
+    *   ) printf $columns $fail $duration $yellow$testname$reset;;
   esac
 
   return $rc
@@ -346,5 +402,5 @@ unset -v FilenamesT
 return 2>/dev/null
 set -euf
 
-tesht.Setup tesht.timestamp
+tesht.InitModule tesht.timestamp
 tesht.Main "$TestnameListT" "$FilenameListT"
