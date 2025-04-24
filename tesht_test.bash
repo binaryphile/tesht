@@ -7,28 +7,52 @@ test_tesht.test() {
   timestamp() { return 0; }
   tesht.Init timestamp
 
-  ## act
-  # run the command in a subshell and check counting happened
-  local rc got
-  got=$(
-    tesht.test runTwoSubtests
-    exit $TestCountT
-  ) && rc=$? || rc=$?
+  local -A case1=(
+    [name]='count two subtests'
+    [funcname]='runTwoSubtests'
+    [want]=2
+  )
 
-  ## assert
-  # assert counting was done
-  (( rc == 2 )) || {
-    echo "${NL}TestCountT is wrong. want: 2, got: $TestCountT$NL"
-    return 1
+  local -A case2=(
+    [name]='count one subtest'
+    [funcname]='runOneSubtest'
+    [want]=1
+  )
+
+  # subtest runs each test case
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    eval "$(tesht.Inherit "$casename")"
+
+    ## act
+    local rc got
+    got=$(
+      tesht.test "$funcname"
+      exit $TestCountT
+    ) && rc=$? || rc=$?
+
+    ## assert
+    (( rc == want )) || {
+      echo "${NL}TestCountT is wrong. want: $want, got: $TestCountT$NL"
+      return 1
+    }
   }
+
+  tesht.Run test_tesht.test "${!case@}"
 }
 
-# A dummy test run by test_tesht.test.
-# The point of this test is not to pass or fail but to simply run
-# two subtest cases so they may be counted in the results.
+# Test functions for different scenarios
 runTwoSubtests() {
   subtest() { :; }                  # necessary, always passes
   local -A case=([name]=slug)       # name is required in this map
   tesht.Run runTwoSubtests case     # it's ok to call tesht.Run with the same subtest twice
   tesht.Run runTwoSubtests case
+}
+
+runOneSubtest() {
+  subtest() { :; }
+  local -A case=([name]=slug)
+  tesht.Run runOneSubtest case
 }
