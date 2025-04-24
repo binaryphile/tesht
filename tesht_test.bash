@@ -10,13 +10,13 @@ test_tesht.test() {
   local -A case1=(
     [name]='count two subtests'
     [funcname]='runTwoSubtests'
-    [want]=2
+    [want]=1  # Should be 2, but we'll make it fail first
   )
 
   local -A case2=(
     [name]='count one subtest'
     [funcname]='runOneSubtest'
-    [want]=1
+    [want]=2  # Should be 1, but we'll make it fail first
   )
 
   # subtest runs each test case
@@ -35,7 +35,7 @@ test_tesht.test() {
 
     ## assert
     (( rc == want )) || {
-      echo "${NL}TestCountT is wrong. want: $want, got: $TestCountT$NL"
+      echo "${NL}TestCountT is wrong. want: $want, got: $rc$NL"
       return 1
     }
   }

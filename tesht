@@ -23,7 +23,7 @@ declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
-# This template is instantiated with tesht.Instantiate to introduce TIMEFUNCNAME.
+# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
 tesht.MainTemplate() {
   local TestnameListT=$1 FilenamesT=( $2 )
 
@@ -46,6 +46,15 @@ tesht.MainTemplate() {
   echo $PassCountT/$TestCountT
 }
 
+# tesht.Setup sets up dependencies.
+tesht.Setup() {
+  local timeFuncname=$1
+
+  tesht.newFunc tesht.Main tesht.MainTemplate TIMEFUNCNAME $timeFuncname
+  tesht.newFunc tesht.test tesht.testTemplate TIMEFUNCNAME $timeFuncname
+  tesht.newFunc tesht.runSubtest tesht.runSubtestTemplate TIMEFUNCNAME $timeFuncname
+}
+
 ## internal functions
 
 # tesht.contains returns whether item is in array.
@@ -64,24 +73,23 @@ tesht.listTestnames() {
   awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
-# tesht.portIsInUse detects whether port is already in use.
-tesht.portIsInUse() {
-  local pid rc
-  command -v lsof &>/dev/null && {
-    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
-    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
-    return $rc
-  }
+# tesht.newFunc creates a new function from a template function.
+# The template function contains a token to be replaced, representing a dependency.
+# The template is renamed to funcname and evaluated with the token substituted beforehand.
+tesht.newFunc() {
+  local funcname=$1 templatename=$2 token=$3 value=$4
 
-  command -v ss &>/dev/null && {
-    ss -tuln | grep -q ":$port\b" && rc=$? || rc=$?
-    (( rc == 0 )) && echo "http server port $port is taken"
-    return $rc
-  }
+  local func=$(declare -f $templatename)
+  func=${func/$templatename/$funcname}
+  eval "${func//$token/$value}"
+}
 
-  netstat -an | grep -qE "(:$port\s+).*LISTEN" && rc=$? || rc=$?
-  (( rc == 0 )) && echo "http server port $port is taken"
-  return $rc
+# tesht.tab indents each line of input with a tab.
+tesht.tab() {
+  local line
+  while read -r line; do
+    printf '\t%s\n' $line
+  done
 }
 
 Green=$'\033[38;5;82m'
@@ -96,7 +104,7 @@ Pass="--- ${Green}PASS$Reset"
 Run="=== ${Yellow}RUN$Reset"
 
 # tesht.test tests the named function.
-# This template is instantiated with tesht.Instantiate to introduce TIMEFUNCNAME.
+# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
 tesht.testTemplate() {
   local testname=$1
 
@@ -109,8 +117,7 @@ tesht.testTemplate() {
   local -i subtestTestCount=0 subtestPassCount=0
   (
     source $filename
-    $testname
-    rc=$PIPESTATUS
+    $testname && rc=$? || rc=$?
     [[ $(declare -f $testname) == *tesht.Run* ]] && echo "$subtestTestCount $subtestPassCount" >$tmpname
     exit $rc
   ) && rc=$? || rc=$?
@@ -197,6 +204,48 @@ tesht.MktempDir() {
   echo $dir
 }
 
+# tesht.portIsInUse detects whether port is already in use.
+tesht.portIsInUse() {
+  local pid rc
+  command -v lsof &>/dev/null && {
+    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
+    return $rc
+  }
+
+  command -v ss &>/dev/null && {
+    ss -tuln | grep -q ":$port\b" && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken"
+    return $rc
+  }
+
+  netstat -an | grep -qE "(:$port\s+).*LISTEN" && rc=$? || rc=$?
+  (( rc == 0 )) && echo "http server port $port is taken"
+  return $rc
+}
+
+# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
+# It waits until the server is ready before returning.
+tesht.StartHttpServer() {
+  local port=${1:-8000}
+
+  tesht.portIsInUse $port && return 1
+
+  # start the http server, redirect stdout so it doesn't hang
+  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
+  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
+
+  for duration in 0.1 0.2 0.4 0.8; do
+    sleep $duration
+    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
+    (( rc == 0 )) && break
+  done
+
+  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
+
+  return $rc
+}
+
 ## table test helpers
 
 # tesht.Inherit returns an eval'able set of variable assignments from a map.
@@ -210,26 +259,6 @@ tesht.Inherit() {
   for key in ${!map[*]}; do
     echo "declare $key=${map[$key]@Q}"
   done
-}
-
-# tesht.Init sets up dependencies.
-tesht.Init() {
-  local timeFuncname=$1
-
-  tesht.Instantiate tesht.MainTemplate tesht.Main TIMEFUNCNAME $timeFuncname
-  tesht.Instantiate tesht.testTemplate tesht.test TIMEFUNCNAME $timeFuncname
-  tesht.Instantiate tesht.runSubtestTemplate tesht.runSubtest TIMEFUNCNAME $timeFuncname
-}
-
-# tesht.Instantiate creates a new function from a template function.
-# The template function contains a token to be replaced, representing a dependency.
-# The template is renamed to funcname and evaluated with the token substituted beforehand.
-tesht.Instantiate() {
-  local templatename=$1 funcname=$2 token=$3 value=$4
-
-  local func=$(declare -f $templatename)
-  func=${func/$templatename/$funcname}
-  eval "${func//$token/$value}"
 }
 
 # tesht.Run runs tesht.runSubtest on each test case.
@@ -256,7 +285,7 @@ tesht.Run() {
 # It returns an error result code if there was failure.
 # It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
-# This template is instantiated with tesht.Instantiate to introduce TIMEFUNCNAME.
+# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
 tesht.runSubtestTemplate() {
   local testname=$1 mapname=$2
 
@@ -278,7 +307,7 @@ tesht.runSubtestTemplate() {
   printf $columns $run '' $testname
 
   local startTime=$(TIMEFUNCNAME) rc
-  (subtest $mapname | tesht.tab) && rc=$? || rc=$?
+  (subtest $mapname) && rc=$? || rc=$?
   local endTime=$(TIMEFUNCNAME)
 
   local duration
@@ -299,36 +328,6 @@ tesht.runSubtestTemplate() {
   return $rc
 }
 
-# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
-# It waits until the server is ready before returning.
-tesht.StartHttpServer() {
-  local port=${1:-8000}
-
-  tesht.portIsInUse $port && return 1
-
-  # start the http server, redirect stdout so it doesn't hang
-  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
-  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
-
-  for duration in 0.1 0.2 0.4 0.8; do
-    sleep $duration
-    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
-    (( rc == 0 )) && break
-  done
-
-  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
-
-  return $rc
-}
-
-# tesht.tab indents each line of input with a tab.
-tesht.tab() {
-  local line
-  while read -r line; do
-    printf '\t%s\n' $line
-  done
-}
-
 # flag to enable tracing
 [[ $1 == -x ]] && { shift; set -x; }
 
@@ -347,5 +346,5 @@ unset -v FilenamesT
 return 2>/dev/null
 set -euf
 
-tesht.Init tesht.timestamp
+tesht.Setup tesht.timestamp
 tesht.Main "$TestnameListT" "$FilenameListT"
