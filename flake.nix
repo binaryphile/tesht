@@ -25,6 +25,7 @@
             scc
           ];
           shellHook = ''
+            export IN_NIX_DEVELOP=1
             echo "Welcome to the development shell!"
           '';
         };
