@@ -174,7 +174,7 @@ tesht.timestamp() {
 tesht.AssertGot() {
   local got=$1 want=$2
 
-  [[ $got == "$want" ]] && return
+  [[ $got == $want ]] && return
 
   cat <<END
 
@@ -190,11 +190,26 @@ END
   return 1
 }
 
+tesht.AssertRC() {
+  local rc=$1 wantrc=$2 got=${3:-}
+
+  (( rc == wantrc )) && return
+  case $got in
+    ''  ) tesht.Log "error = $rc, want: $wantrc";;
+    *   ) tesht.Log "error = $rc, want: $wantrc" "$got";;
+  esac
+}
+
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
 tesht.Diff() {
   local got=$1 want=$2
   diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
+}
+
+tesht.Log() {
+  local IFS=$'\n'
+  echo "$NL$NL$*"
 }
 
 # tesht.MktempDir makes a temporary directory and returns the directory name.
@@ -313,7 +328,7 @@ tesht.Inherit() {
 
   local KEY
   for KEY in ${!MAP[*]}; do
-    tesht.declareVar $KEY ${MAP[$KEY]}
+    tesht.declareVar $KEY "${MAP[$KEY]}"
   done
 }
 
