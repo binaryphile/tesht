@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-(( IN_NIX_DEVELOP )) || nix develop --command "$0" "$@"
+(( IN_NIX_DEVELOP )) || IN_NIX_DEVELOP=1 exec nix develop --command "$0" "$@"
 
 Prog=$(basename "$0")   # match what the user called
 Version=0.1
