@@ -15,7 +15,13 @@ test_AssertGot() {
     [name]='given got does not match want, output a message and return an error'
     [args]='(no match)'
     [wantrc]=1
-    [want]="$NL${NL}got does not match want:$NL< no$NL---$NL> match$NL${NL}use this line to update want to match:$NL    want='no'"
+    [want]="$NL${NL}got does not match want:
+< no
+---
+> match
+
+use this line to update want to match:
+    want='no'"
   )
 
   # subtest runs each test case
@@ -24,20 +30,15 @@ test_AssertGot() {
 
     ## arrange
     unset -v want wantrc
-    eval "$(tesht.Inherit $casename)" >&2
+    eval "$(tesht.Inherit $casename)"
+    [[ -v wantrc ]] || local wantrc=0
 
     ## act
     local got rc
     got=$(tesht.AssertGot "${args[@]}") && rc=$? || rc=$?
 
     ## assert
-    # if this is a test for error behavior, check it
-    if [[ -v wantrc ]]; then
-      tesht.AssertRC $rc $wantrc "$got" || return
-    else
-      tesht.AssertRC $rc 0 "$got" || return
-    fi
-
+    tesht.AssertRC $rc $wantrc "$got" || return
     tesht.AssertGot "$got" "$want"
   }
 
@@ -74,10 +75,10 @@ test_in() {
 
     ## act
     local got
-    tesht.in values $item && got=$? || got=$?
+    tesht.in values $item && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertGot $got $want
+    tesht.AssertRC $rc $want ''
   }
 
   tesht.Run test_tesht.in ${!case@}
@@ -88,10 +89,18 @@ test_test() {
   ## arrange
   tesht.InitModule timestamp
 
+  local cr=$'\r'            # carriage return
+  local tab=$'\t'
+
+  local g=$'\E[38;5;82m'    # green
+  local y=$'\E[38;5;220m'   # yellow
+
+  local r=$'\E[0m'        # reset
+
   local -A case1=(
     [name]='print a pass message for success'
     [funcname]='testSuccess'
-    [want]='a'
+    [want]="=== ${y}RUN$r$tab$tab${tab}testSuccess$cr--- ${g}PASS$r${tab}0ms${tab}testSuccess"
   )
 
   # subtest runs each test case
@@ -103,10 +112,10 @@ test_test() {
 
     ## act
     local got rc
-    got=(tesht.test $funcname) && rc=$? || rc=$?
+    got=$(tesht.test $funcname) && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertGot $got $want
+    tesht.AssertGot "$got" "$want"
   }
 
   tesht.Run test_tesht.test ${!case@}
