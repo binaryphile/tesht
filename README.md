@@ -2,10 +2,7 @@
 
 ![version](assets/version.svg) ![lines](assets/lines.svg) ![tests](assets/tests.svg) ![coverage](assets/coverage.svg)
 
-**tesht** is a lightweight Bash testing framework. It finds test files and functions
-automatically and runs them with formatted output and timing information. In addition to the
-usual solitary tests, tesht adds Go-inspired table-driven tests for effective test code
-reuse.
+**tesht** is a lightweight Bash testing framework that automatically discovers and runs test files and functions with formatted output and timing information. In addition to standard unit tests, tesht supports Go-inspired table-driven tests for efficient test code reuse.
 
 ![tesht output](assets/tesht.gif)
 *tesht output*
@@ -14,27 +11,27 @@ reuse.
 
 ## Features
 
-- Automatic discovery of test files ending in `_test.bash` and test functions starting with
-  `test_`
-- Output suppression
-- Isolation of tests from one another since tests are run in separate subshells
-- Time tracking and reporting per test and for the full suite
-- Subtest support via `tesht.Run` for table-driven testing
-- Helpers for dependencies such as an HTTP server or filesystem access
+- Automatic discovery of test files ending in `_test.bash` and test functions starting with `test_`
+- Output suppression and test isolation in separate subshells
+- Per-test and suite-wide timing information
+- Table-driven testing via `tesht.Run` for efficient test case reuse
+- Built-in helpers for common testing needs:
+  - HTTP server management (`tesht.StartHttpServer`)
+  - Temporary directory creation (`tesht.MktempDir`)
+  - Assertions (`tesht.AssertGot`, `tesht.AssertRC`)
+  - Diff output formatting (`tesht.Diff`)
+  - Logging (`tesht.Log`)
 
 --------------------------------------------------------------------------------------------
 
 ## Usage
 
-``` bash
+```bash
 tesht [test_function]
 ```
 
-- With **no arguments**, it finds and runs all `test_*` functions in `*_test.bash` files in
-    the current directory
-
-- With a **test function name**, it finds and runs just that
-    function (including subtests)
+- With **no arguments**, runs all `test_*` functions in `*_test.bash` files in the current directory
+- With a **test function name**, runs only that function and subtests, if any
 
 --------------------------------------------------------------------------------------------
 
@@ -42,7 +39,7 @@ tesht [test_function]
 
 **echo_test.bash**:
 
-``` bash
+```bash
 # test_echo tests the behavior of the echo builtin.
 test_echo() {
   ## act on the system under test
@@ -55,61 +52,22 @@ test_echo() {
 
 Output:
 
-``` bash
+```bash
 $ tesht
 --- PASS    8ms     test_echo
 PASS        11ms
 1/1
 ```
 
-`tesht.AssertGot` compares `got` and `want`.  If they are unequal, it outputs a diff of the
-two. Also, its return code reflects whether the assertion passed.  In our code here, that
-becomes the return code of `test_echo` as well since `tesht.AssertGot` is the last command
-called by the function. That means its return value is the return value of the test as a
-whole.
+`tesht.AssertGot` compares `got` and `want`. If they differ, it shows their diff. The function's return code indicates whether the assertion passed, which becomes the test's overall result since it's the last command executed.
 
 --------------------------------------------------------------------------------------------
 
 ## Writing Testable Code
 
-Scripts are written to be run, not tested.  Tesht is meant to test functions within a
-script, not the script itself.
+Tesht is designed to test functions within a script, so first, ensure your code is organized into functions. Without functions, tesht won't be able to help.
 
-First, that means you need to have functions available to test.  If you are not writing
-functions in your code, tesht won't do anything for you.
-
-Second, that means we need a way to load functions from a script without actually running
-it.
-
-As an example, imagine we have a script with a function, `greet`, that greets a particular
-name:
-
-**greet**:
-
-```bash
-#!/usr/bin/env bash
-
-greet() { echo "Hello, $1!"; }
-
-read -p 'Your name: ' name
-greet "$name"
-```
-
-**greet_test.bash**:
-
-```bash
-source ./greet
-
-test_greet() {
-  ...
-}
-```
-
-The problem here is that we need to source the `greet` script to test it, however it runs
-when it is sourced.  We just want to test the `greet` function, not run the `greet` script.
-
-In order to prevent this, structure your script so that it can stop after functions are
-defined but before the script executes them.
+Second, structure your script to allow function loading without execution. For example:
 
 **greet**:
 
@@ -124,27 +82,20 @@ read -p 'Your name: ' name
 greet "$name"
 ```
 
-Now the script's `greet` function can be tested.  We've added a `return` statement after the
-function definitions and before the script starts using them.  When the script is sourced,
-the sourcing ends at the return, leaving the functions defined but not running the rest of
-the code.  By contrast, when the script is run from the command line, `return` doesn't make
-sense and errors, and the script keeps going.  We swallow the error message with
-`/dev/null`.
+The `return` statement after function definitions prevents script execution when sourced, while still allowing the functions to be tested. When run directly, the `return` statement errors (silently) and the script continues execution.
 
 --------------------------------------------------------------------------------------------
 
 ## Table-Driven Tests
 
-Table-driven tests reuse subtest logic across test cases.
-
-Here is a test file with a test and two subtests.
+Table-driven tests reuse test logic across multiple cases. Here's an example:
 
 **greet_test.bash**:
 
-``` bash
+```bash
 # test_greet tests that greet outputs a greeting message on stdout.
 test_greet() {
-  # tesht.Run runs subtest (defined below) on each of these cases.
+  # Define test cases as associative arrays
   local -A case1=(
     [name]='greet Alice on stdout'
     [command]='greet Alice'
@@ -156,19 +107,13 @@ test_greet() {
     [want]='Hello, Bob!'
   )
 
-  # Define a subtest that works with an individual case.
-  # Case values are turned into local variables with tesht.Inherit.
+  # Define a subtest that works with an individual case
   subtest() {
     local casename=$1
+    eval "$(tesht.Inherit "$casename")"  # Convert case fields to local variables
 
-    ## arrange
-    eval "$(tesht.Inherit "$casename")"
-
-    ## act
-    got=$(eval "$command")  # this case's command is in $command because of tesht.Inherit
-
-    ## assert
-    tesht.AssertGot "$got" "$want"  # same for $want
+    got=$(eval "$command")
+    tesht.AssertGot "$got" "$want"
   }
 
   tesht.Run test_greet "${!case@}"
@@ -177,7 +122,7 @@ test_greet() {
 
 Output:
 
-``` bash
+```bash
   --- PASS  12ms    test_greet/greet Alice
   --- PASS  11ms    test_greet/greet Bob
 --- PASS    25ms    test_greet
@@ -187,31 +132,54 @@ PASS 29 ms
 
 --------------------------------------------------------------------------------------------
 
-## Helpers
+## Public Functions
+
+### tesht.Run
+Runs a table-driven test with multiple cases:
+```bash
+tesht.Run test_name "${!case@}"
+```
 
 ### tesht.Inherit
-
-Extracts the keys and values in an associative array into local variables named by key.
-Useful for converting test case fields into variables you can work with.
-
-``` bash
+Converts associative array keys and values into local variables:
+```bash
 eval "$(tesht.Inherit casename)"
 ```
 
-where `casename` is the name of the associative array variable.
+### tesht.AssertGot
+Compares actual and expected output, showing a diff on failure:
+```bash
+tesht.AssertGot "$got" "$want"
+```
+
+### tesht.AssertRC
+Checks if a return code matches the expected value:
+```bash
+tesht.AssertRC $rc $wantrc
+```
 
 ### tesht.Diff
+Shows a unified diff of actual and expected output, with tabs displayed as `^I`:
+```bash
+tesht.Diff "$got" "$want"
+```
 
-Outputs a unified diff of actual and expected output. Tabs in output are shown as `^I`.
+### tesht.Log
+Outputs a message with newlines:
+```bash
+tesht.Log "Error message"
+```
 
-`tesht.AssertGot` employs `tesht.Diff` internally to output an error message, but you may
-find it useful for other purposes as well.
+### tesht.MktempDir
+Creates a temporary directory:
+```bash
+dir=$(tesht.MktempDir) || return 1
+```
 
-``` bash
-if [[ $got != "$want" ]]; then
-  tesht.Diff "$got" "$want"
-  return 1
-fi
+### tesht.StartHttpServer
+Starts a local HTTP server on a specified port:
+```bash
+pid=$(tesht.StartHttpServer 8000) || return 1
 ```
 
 --------------------------------------------------------------------------------------------
