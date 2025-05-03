@@ -1,26 +1,65 @@
 # Because we are being run by tesht, it is already loaded and doesn't need to be sourced.
 NL=$'\n'
 
-# test_tesht.in tests that the in function works.
-test_tesht.in() {
-  ## arrange
-  # When running this test, the outer tesht instance is protected from modifications by employing a subshell,
-  # so we can modify its dependencies safely.
-  timestamp() { return 0; }
-  tesht.InitModule timestamp
+# deterministic mock for time
+timestamp() { return 0; }
 
+# test_AssertGot returns an error and a help message if got != want.
+# Otherwise it does nothing.
+test_AssertGot() {
+  local -A case1=(
+    [name]='given got does not match want, output a message and return an error'
+    [args]='(no match)'
+    [wantrc]=1
+    [want]="$NL${NL}got does not match want:
+< no
+---
+> match
+
+use this line to update want to match:
+    want='no'"
+  )
+
+  local -A case2=(
+    [name]='given got matches want, output nothing'
+    [args]='(match match)'
+    [want]=''
+  )
+
+  # subtest runs each test case
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    local wantrc=0
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got rc
+    got=$(tesht.AssertGot "${args[@]}") && rc=$? || rc=$?
+
+    ## assert
+    ! tesht.AssertRC $rc $wantrc ''
+    tesht.AssertGot "$got" "$want"
+  }
+
+  tesht.Run test_AssertGot ${!case@}
+}
+
+# test_in tests that the in function works.
+test_in() {
   local -A case1=(
     [name]='detect an item in an array'
     [values]='(a b c)'
     [item]='b'
-    [want]=0
+    [wantrc]=0
   )
 
   local -A case2=(
     [name]='not detect an item not in an array'
     [values]='(a b c)'
     [item]='d'
-    [want]=1
+    [wantrc]=1
   )
 
   # subtest runs each test case
@@ -31,31 +70,67 @@ test_tesht.in() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got
-    tesht.in values $item && got=$? || got=$?
+    local rc
+    tesht.in values $item && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertGot $got $want
+    tesht.AssertRC $rc $wantrc ''
   }
 
-  tesht.Run test_tesht.in ${!case@}
+  tesht.Run test_in ${!case@}
 }
 
-# test_tesht.test tests that the test function tests.
-test_tesht.test() {
-  ## arrange
-  timestamp() { return 0; }
-  tesht.InitModule timestamp
+# test_test tests that the test function tests tests.
+test_test() {
+  local cr=$'\r'            # carriage return
+  local tab=$'\t'
+
+  local green=$'\E[38;5;82m'
+  local yellow=$'\E[38;5;220m'
+
+  local reset=$'\E[0m'
+
+  local pass=${green}PASS$reset
+  local run=${yellow}RUN$reset
 
   local -A case1=(
+    [name]='print a pass message for success'
+    [funcname]='testSuccess'
+    [want]="=== $run$tab$tab${tab}testSuccess$cr--- $pass${tab}0ms${tab}testSuccess"
+  )
+
+  # subtest runs each test case
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    tesht.InitModule timestamp
+    local wantrc=0
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got rc
+    got=$(tesht.test $funcname) && rc=$? || rc=$?
+
+    ## assert
+    ! tesht.AssertRC $rc $wantrc ''
+    tesht.AssertGot "$got" "$want"
+  }
+
+  tesht.Run test_tesht.test ${!case@}
+}
+
+# test_subtests_tesht.test tests that the test function tests.
+test_test_subtests() {
+  local -A case1=(
     [name]='count two subtests'
-    [funcname]='runTwoSubtests'
+    [funcname]='testTwoSubtests'
     [want]=2
   )
 
   local -A case2=(
     [name]='count one subtest'
-    [funcname]='runOneSubtest'
+    [funcname]='testOneSubtest'
     [want]=1
   )
 
@@ -78,19 +153,22 @@ test_tesht.test() {
     tesht.AssertGot $got $want
   }
 
-  tesht.Run test_tesht.test ${!case@}
+  tesht.Run test_test_subtests ${!case@}
 }
 
-# Test functions for different scenarios
-runTwoSubtests() {
-  subtest() { :; }                  # necessary, always passes
-  local -A case=([name]=slug)       # name is required in this map
-  tesht.Run runTwoSubtests case     # it's ok to call tesht.Run with the same subtest twice
-  tesht.Run runTwoSubtests case
+# Mock test functions for different scenarios
+
+testTwoSubtests() {
+  subtest() { :; }                  # required
+  local -A case=([name]=slug)       # name is required
+  tesht.Run testTwoSubtests case    # it's ok to call tesht.Run with the same subtest twice
+  tesht.Run testTwoSubtests case
 }
 
-runOneSubtest() {
+testOneSubtest() {
   subtest() { :; }
   local -A case=([name]=slug)
-  tesht.Run runOneSubtest case
+  tesht.Run testOneSubtest case
 }
+
+testSuccess() { :; }

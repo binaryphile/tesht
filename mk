@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+(( IN_NIX_DEVELOP )) || IN_NIX_DEVELOP=1 exec nix develop --command "$0" "$@"
+
 Prog=$(basename "$0")   # match what the user called
 Version=0.1
 
@@ -31,6 +33,7 @@ END
 # cmd.badges renders badges for program version, source lines, tests passed and coverage.
 # It updates the latter three statistics beforehand.
 cmd.badges() {
+  cmd.test
   cmd.cover
   cmd.lines
 
@@ -55,7 +58,7 @@ cmd.cover() {
 cmd.gif() {
   asciinema rec -c '/usr/bin/bash -c tesht' tesht.cast
   agg --speed 0.1 tesht.cast assets/tesht.gif
-  rm tesht.gif
+  rm tesht.cast
   echo "made gif"
 }
 
