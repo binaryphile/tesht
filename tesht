@@ -19,8 +19,6 @@
 
 IFS=$'\n'
 
-declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
-
 GreenT=$'\033[38;5;82m'
 RedT=$'\033[38;5;196m'
 YellowT=$'\033[38;5;220m'
@@ -38,7 +36,8 @@ RunT=${YellowT}RUN$ResetT
 tesht.MainTemplate() {
   local testnameList=$1 filenames=( $2 )
 
-  local startTime=$(TIMEFUNCNAME) failed=0
+  local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
+  local startTime=$(TIMEFUNCNAME)
 
   for filename in ${filenames[*]}; do
     tesht.testFile $filename "$testnameList" || failed=1
@@ -54,10 +53,64 @@ tesht.MainTemplate() {
   echo $PassCountT/$TestCountT
 }
 
+# tesht.AssertGot returns whether the items match and, if not, outputs a message.
+tesht.AssertGot() {
+  local got=$1 want=$2
+
+  [[ $got == $want ]] && return
+
+  cat <<END
+
+
+got does not match want:
+$(tesht.Diff "$got" "$want")
+
+use this line to update want to match:
+    want=${got@Q}
+
+END
+
+  return 1
+}
+
+tesht.AssertRC() {
+  local rc=$1 wantrc=$2
+
+  (( rc == wantrc )) || tesht.Log "error = $rc, want: $wantrc"
+}
+
+tesht.declareVar() {
+  local name=$1 value=$2
+  [[ $name == *s && $value == '('*')' ]] &&
+    echo "declare -a $name=${value@Q}" ||
+    echo "declare $name=${value@Q}"
+}
+
+# tesht.Diff returns a diff of its arguments with special characters shown by cat.
+# It is a test helper to generate failed assertion output.
+tesht.Diff() {
+  local got=$1 want=$2
+  diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
+}
+
 # tesht.in returns whether item is in array.
 tesht.in() {
   local -n ARRAY=$1
   [[ "$IFS${ARRAY[*]}$IFS" == *"$IFS$2$IFS"* ]]
+}
+
+# tesht.Inherit returns an eval'able set of variable assignments from a map.
+# The map is an associative array variable in the outer scope named by mapname.
+# It is a test helper that makes it simple to work with the keys of the testmap.
+# Inspired by nix's inherit keyword.
+tesht.Inherit() {
+  local MAPNAME=$1
+  local -n MAP=$MAPNAME
+
+  local KEY
+  for KEY in ${!MAP[*]}; do
+    tesht.declareVar $KEY "${MAP[$KEY]}"
+  done
 }
 
 # tesht.InitModule sets up dependencies.
@@ -76,6 +129,22 @@ tesht.listTestnames() {
   awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
+tesht.Log() {
+  local IFS=$NL
+  echo "$NL$NL$*"
+}
+
+# tesht.MktempDir makes a temporary directory and returns the directory name.
+# It returns an error if it cannot make the directory.
+tesht.MktempDir() {
+  dir=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
+
+  [[ $dir == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
+
+  [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
+  echo $dir
+}
+
 # tesht.newFunc creates a new function from a template function.
 # The template function contains a token to be replaced, representing a dependency.
 # The template is renamed to funcname and evaluated with the token substituted beforehand.
@@ -85,6 +154,108 @@ tesht.newFunc() {
   local func=$(declare -f $templatename)
   func=${func/$templatename/$funcname}
   eval "${func//$token/$value}"
+}
+
+# tesht.portIsInUse detects whether port is already in use.
+tesht.portIsInUse() {
+  local pid rc
+  command -v lsof &>/dev/null && {
+    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
+    return $rc
+  }
+
+  command -v ss &>/dev/null && {
+    ss -tuln | grep -q ":$port\b" && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken"
+    return $rc
+  }
+
+  netstat -an | grep -qE "(:$port\s+).*LISTEN" && rc=$? || rc=$?
+  (( rc == 0 )) && echo "http server port $port is taken"
+  return $rc
+}
+
+# tesht.Run runs tesht.runSubtest on each test case.
+tesht.Run() {
+  local failed=0 casename
+  for casename in "$@"; do
+    tesht.runSubtest "${FUNCNAME[1]}" "$casename" || {
+      (( $? == 128 )) && return 128 # fatal
+      failed=1
+    }
+  done
+
+  return $failed
+}
+
+# tesht.runSubtest runs the function `subtest` with mapname as an argument.
+# mapname is the name of an associative array in an outer scope
+# holding at least the key "name".
+# It outputs success or failure.
+# It returns an error result code if there was failure.
+# It cannot wholly rely on the global namespace for tesht functions/variables
+# because it runs in the context of a test, so be careful.
+# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
+tesht.runSubtestTemplate() {
+  local testname=$1 mapname=$2
+
+  local -n map=$mapname
+  local testname=$testname/${map[name]}
+
+  local columns='=== %s\t\t\t%s'
+  printf $columns $RunT $testname
+
+  local startTime=$(TIMEFUNCNAME) rc
+  (subtest $mapname) && rc=$? || rc=$?
+  local endTime=$(TIMEFUNCNAME)
+
+  local duration=$(( endTime - startTime ))ms
+
+  subtestTestCount+=1   # in caller's scope
+  columns='\r--- %s\t%s\t%s\n'
+  case $rc in
+    0   )
+      printf $columns $PassT $duration $testname
+      subtestPassCount+=1   # in caller's scope
+      ;;
+    128 ) printf $columns $FatalT $duration $testname;;
+
+    *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
+  esac
+
+  return $rc
+}
+
+# tesht.Softly runs assertions provided on stdin and reports whether any failed.
+tesht.Softly() {
+  local FAILED=0 LINE  # don't mask higher namespaces
+  while IFS='' read -r LINE; do
+    eval "$LINE" || FAILED=1
+  done
+  return $FAILED
+}
+
+# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
+# It waits until the server is ready before returning.
+tesht.StartHttpServer() {
+  local port=${1:-8000}
+
+  tesht.portIsInUse $port && return 1
+
+  # start the http server, redirect stdout so it doesn't hang
+  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
+  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
+
+  for duration in 0.1 0.2 0.4 0.8; do
+    sleep $duration
+    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
+    (( rc == 0 )) && break
+  done
+
+  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
+
+  return $rc
 }
 
 # tesht.test tests the named function.
@@ -156,219 +327,12 @@ tesht.testFile() {
   return $failed
 }
 
-# tesht.Timestamp returns the current time in Unix time as milliseconds.
-tesht.Timestamp() {
+# tesht.UnixMilli returns the current time in Unix time as milliseconds.
+tesht.UnixMilli() {
   local whole fraction
   # EPOCHREALTIME reports second fractions to nano precision
   IFS=. read -r whole fraction <<<$EPOCHREALTIME
   echo "$whole${fraction:0:3}"
-}
-
-## helpers - good for regular tests and table tests
-
-# tesht.AssertGot returns whether the items match and, if not, outputs a message.
-tesht.AssertGot() {
-  local got=$1 want=$2
-
-  [[ $got == $want ]] && return
-
-  cat <<END
-
-
-got does not match want:
-$(tesht.Diff "$got" "$want")
-
-use this line to update want to match:
-    want=${got@Q}
-
-END
-
-  return 1
-}
-
-tesht.AssertRC() {
-  local rc=$1 wantrc=$2
-
-  (( rc == wantrc )) || tesht.Log "error = $rc, want: $wantrc"
-}
-
-# tesht.Diff returns a diff of its arguments with special characters shown by cat.
-# It is a test helper to generate failed assertion output.
-tesht.Diff() {
-  local got=$1 want=$2
-  diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
-}
-
-tesht.Log() {
-  local IFS=$'\n'
-  echo "$NL$NL$*"
-}
-
-# tesht.MktempDir makes a temporary directory and returns the directory name.
-# It returns an error if it cannot make the directory.
-tesht.MktempDir() {
-  dir=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
-
-  [[ $dir == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
-
-  [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
-  echo $dir
-}
-
-# tesht.portIsInUse detects whether port is already in use.
-tesht.portIsInUse() {
-  local pid rc
-  command -v lsof &>/dev/null && {
-    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
-    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
-    return $rc
-  }
-
-  local func=$(declare -f $templatename)
-  func=${func/$templatename/$funcname}
-  eval "${func//$token/$value}"
-}
-
-# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
-# It waits until the server is ready before returning.
-tesht.StartHttpServer() {
-  local port=${1:-8000}
-
-  tesht.portIsInUse $port && return 1
-
-  # start the http server, redirect stdout so it doesn't hang
-  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
-  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
-
-  for duration in 0.1 0.2 0.4 0.8; do
-    sleep $duration
-    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
-    (( rc == 0 )) && break
-  done
-
-  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
-
-  return $rc
-}
-
-# tesht.portIsInUse detects whether port is already in use.
-tesht.portIsInUse() {
-  local pid rc
-  command -v lsof &>/dev/null && {
-    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
-    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
-    return $rc
-  }
-
-  command -v ss &>/dev/null && {
-    ss -tuln | grep -q ":$port\b" && rc=$? || rc=$?
-    (( rc == 0 )) && echo "http server port $port is taken"
-    return $rc
-  }
-
-  netstat -an | grep -qE "(:$port\s+).*LISTEN" && rc=$? || rc=$?
-  (( rc == 0 )) && echo "http server port $port is taken"
-  return $rc
-}
-
-# tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
-# It waits until the server is ready before returning.
-tesht.StartHttpServer() {
-  local port=${1:-8000}
-
-  tesht.portIsInUse $port && return 1
-
-  # start the http server, redirect stdout so it doesn't hang
-  pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
-  (( pid != 0 )) || { echo 'could not start http server'; return 1; }
-
-  for duration in 0.1 0.2 0.4 0.8; do
-    sleep $duration
-    curl http://127.0.0.1:$port &>/dev/null && rc=$? || rc=$?
-    (( rc == 0 )) && break
-  done
-
-  (( rc == 0 )) && echo $pid || echo 'could not connect to http server'
-
-  return $rc
-}
-
-## table test helpers
-
-tesht.declareVar() {
-  local name=$1 value=$2
-  [[ $name == *s && $value == '('*')' ]] &&
-    echo "declare -a $name=${value@Q}" ||
-    echo "declare $name=${value@Q}"
-}
-
-# tesht.Inherit returns an eval'able set of variable assignments from a map.
-# The map is an associative array variable in the outer scope named by mapname.
-# It is a test helper that makes it simple to work with the keys of the testmap.
-# Inspired by nix's inherit keyword.
-tesht.Inherit() {
-  local MAPNAME=$1
-  local -n MAP=$MAPNAME
-
-  local KEY
-  for KEY in ${!MAP[*]}; do
-    tesht.declareVar $KEY "${MAP[$KEY]}"
-  done
-}
-
-# tesht.Run runs tesht.runSubtest on each test case.
-tesht.Run() {
-  local name=$1
-  shift
-  local casenames=( "$@" )
-
-  local failed=0 casename
-  for casename in "${casenames[@]}"; do
-    tesht.runSubtest "$name" "$casename" || {
-      (( $? == 128 )) && return 128 # fatal
-      failed=1
-    }
-  done
-
-  return $failed
-}
-
-# tesht.runSubtest runs the function `subtest` with mapname as an argument.
-# mapname is the name of an associative array in an outer scope
-# holding at least the key "name".
-# It outputs success or failure.
-# It returns an error result code if there was failure.
-# It cannot wholly rely on the global namespace for tesht functions/variables
-# because it runs in the context of a test, so be careful.
-# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
-tesht.runSubtestTemplate() {
-  local testname=$1 mapname=$2
-
-  local -n map=$mapname
-  local testname=$testname/${map[name]}
-
-  local columns='=== %s\t\t\t%s'
-  printf $columns $RunT $testname
-
-  local startTime=$(TIMEFUNCNAME) rc
-  (subtest $mapname) && rc=$? || rc=$?
-  local endTime=$(TIMEFUNCNAME)
-
-  local duration=$(( endTime - startTime ))ms
-
-  subtestTestCount+=1   # in caller's scope
-  columns='\r--- %s\t%s\t%s\n'
-  case $rc in
-    0   )
-      printf $columns $PassT $duration $testname
-      subtestPassCount+=1   # in caller's scope
-      ;;
-    128 ) printf $columns $FatalT $duration $testname;;
-
-    *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
-  esac
-
-  return $rc
 }
 
 # flag to enable tracing
@@ -389,5 +353,5 @@ unset -v FilenamesT
 return 2>/dev/null
 set -euf
 
-tesht.InitModule tesht.Timestamp
+tesht.InitModule tesht.UnixMilli
 tesht.Main "$TestnameListT" "$FilenameListT"

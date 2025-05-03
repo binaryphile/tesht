@@ -2,13 +2,19 @@
 NL=$'\n'
 
 # deterministic mock for time
-timestamp() { return 0; }
+mockUnixMilli() { return 0; }
 
 # test_AssertGot returns an error and a help message if got != want.
 # Otherwise it does nothing.
 test_AssertGot() {
   local -A case1=(
-    [name]='given got does not match want, output a message and return an error'
+    [name]='when got matches want, output nothing'
+    [args]='(match match)'
+    [want]=''
+  )
+
+  local -A case2=(
+    [name]='when got does not match want, output a message and return an error'
     [args]='(no match)'
     [wantrc]=1
     [want]="$NL${NL}got does not match want:
@@ -18,12 +24,6 @@ test_AssertGot() {
 
 use this line to update want to match:
     want='no'"
-  )
-
-  local -A case2=(
-    [name]='given got matches want, output nothing'
-    [args]='(match match)'
-    [want]=''
   )
 
   # subtest runs each test case
@@ -39,11 +39,13 @@ use this line to update want to match:
     got=$(tesht.AssertGot "${args[@]}") && rc=$? || rc=$?
 
     ## assert
-    ! tesht.AssertRC $rc $wantrc ''
-    tesht.AssertGot "$got" "$want"
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
   }
 
-  tesht.Run test_AssertGot ${!case@}
+  tesht.Run ${!case@}
 }
 
 # test_in tests that the in function works.
@@ -74,29 +76,67 @@ test_in() {
     tesht.in values $item && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertRC $rc $wantrc ''
+    tesht.AssertRC $rc $wantrc
   }
 
-  tesht.Run test_in ${!case@}
+  tesht.Run ${!case@}
+}
+
+CR=$'\r'  # carriage return
+Tab=$'\t'
+
+Green=$'\E[38;5;82m'
+Yellow=$'\E[38;5;220m'
+
+Reset=$'\E[0m'
+
+Pass=${Green}PASS$Reset
+Run=${Yellow}RUN$Reset
+
+# test_Main tests that Main finds a test file executes it.
+test_Main() {
+  local -A case1=(
+    [name]='run a test file'
+    [command]="tesht.Main '' dummy_test.bash"
+    [want]="=== $Run$Tab$Tab${Tab}test_dummy$CR--- $Pass${Tab}0ms${Tab}test_dummy
+$Pass$Tab${Tab}0ms
+1/1"
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+
+    # make time deterministic
+    tesht.InitModule mockUnixMilli
+
+    eval "$(tesht.Inherit $casename)"
+
+    # temporary directory
+    local dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
+    trap "rm -rf $dir" EXIT                     # always clean up
+    cd $dir
+
+    # test file
+    echo 'test_dummy() { :; }' >dummy_test.bash
+
+    ## act
+    local got=$(eval "$command")
+
+    ## assert
+    tesht.AssertGot "$got" "$want"
+  }
+
+  tesht.Run ${!case@}
 }
 
 # test_test tests that the test function tests tests.
 test_test() {
-  local cr=$'\r'            # carriage return
-  local tab=$'\t'
-
-  local green=$'\E[38;5;82m'
-  local yellow=$'\E[38;5;220m'
-
-  local reset=$'\E[0m'
-
-  local pass=${green}PASS$reset
-  local run=${yellow}RUN$reset
-
   local -A case1=(
     [name]='print a pass message for success'
     [funcname]='testSuccess'
-    [want]="=== $run$tab$tab${tab}testSuccess$cr--- $pass${tab}0ms${tab}testSuccess"
+    [want]="=== $Run$Tab$Tab${Tab}testSuccess$CR--- $Pass${Tab}0ms${Tab}testSuccess"
   )
 
   # subtest runs each test case
@@ -104,7 +144,7 @@ test_test() {
     local casename=$1
 
     ## arrange
-    tesht.InitModule timestamp
+    tesht.InitModule mockUnixMilli
     local wantrc=0
     eval "$(tesht.Inherit $casename)"
 
@@ -113,11 +153,13 @@ test_test() {
     got=$(tesht.test $funcname) && rc=$? || rc=$?
 
     ## assert
-    ! tesht.AssertRC $rc $wantrc ''
-    tesht.AssertGot "$got" "$want"
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
   }
 
-  tesht.Run test_tesht.test ${!case@}
+  tesht.Run ${!case@}
 }
 
 # test_subtests_tesht.test tests that the test function tests.
@@ -153,22 +195,48 @@ test_test_subtests() {
     tesht.AssertGot $got $want
   }
 
-  tesht.Run test_test_subtests ${!case@}
+  tesht.Run ${!case@}
 }
+
+# # Test for tesht.testFile
+# test_testFile() {
+#   local -A case1=(
+#     [name]='run test file with no failures'
+#     [filename]='tesht_test.bash'
+#     [want]='PASS'
+#   )
+#
+#   subtest() {
+#     local casename=$1
+#
+#     ## arrange
+#     eval "$(tesht.Inherit $casename)"
+#
+#     ## act
+#     local got
+#     got=$(tesht.testFile "$filename") && rc=$? || rc=$?
+#
+#     ## assert
+#     tesht.AssertGot "$got" "$want"
+#   }
+#
+#   tesht.Run test_testFile ${!case@}
+# }
 
 # Mock test functions for different scenarios
-
-testTwoSubtests() {
-  subtest() { :; }                  # required
-  local -A case=([name]=slug)       # name is required
-  tesht.Run testTwoSubtests case    # it's ok to call tesht.Run with the same subtest twice
-  tesht.Run testTwoSubtests case
-}
+# They aren't run by tesht as tests themselves because they don't start with test_.
 
 testOneSubtest() {
   subtest() { :; }
-  local -A case=([name]=slug)
-  tesht.Run testOneSubtest case
+  local -A case=([name]='slug')
+  tesht.Run case
+}
+
+testTwoSubtests() {
+  subtest() { :; }                  # required
+  local -A case=([name]='slug')     # name is required
+  tesht.Run case    # it's ok to call tesht.Run with the same subtest twice
+  tesht.Run case
 }
 
 testSuccess() { :; }

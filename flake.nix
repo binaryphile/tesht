@@ -19,11 +19,10 @@
             asciinema
             asciinema-agg
             bash
-            code-cursor
             coreutils
             git
             scc
-          ] ++ (if pkgs.stdenv.isLinux then [ kcov ] else []);
+          ] ++ (if pkgs.stdenv.isLinux then [ kcov vscode ] else [ code-cursor ]);
           shellHook = ''
             export IN_NIX_DEVELOP=1
             echo "Welcome to the development shell!"

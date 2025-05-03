@@ -12,7 +12,7 @@ Usage:
 
   Commands:
 
-  The following commands update report.json:
+  The following commands run reports:
     cover -- run kcov and record results
     lines -- run scc and record results
     test -- run tesht and record results
@@ -20,6 +20,8 @@ Usage:
     badges -- run all three and create badges from the results
 
     gif -- create a gif of the tool being run
+
+    code -- run the IDE
 
   Options (if multiple, must be provided as separate flags):
 
@@ -39,6 +41,12 @@ cmd.badges() {
 
   makeBadge "version" $(<VERSION) "#007ec6" assets/version.svg
   echo "made version badge"
+}
+
+# cmd.code runs the current IDE
+cmd.code() {
+  command -v cursor &>/dev/null && exec cursor .
+  code .
 }
 
 # cmd.cover runs coverage testing and makes a badge.
