@@ -58,7 +58,7 @@ cmd.cover() {
 cmd.gif() {
   asciinema rec -c '/usr/bin/bash -c tesht' tesht.cast
   agg --speed 0.1 tesht.cast assets/tesht.gif
-  rm tesht.gif
+  rm tesht.cast
   echo "made gif"
 }
 
