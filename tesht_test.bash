@@ -7,10 +7,6 @@ timestamp() { return 0; }
 # test_AssertGot returns an error and a help message if got != want.
 # Otherwise it does nothing.
 test_AssertGot() {
-  ## arrange
-  # The outer tesht instance is protected from this test's modifications by employing a subshell.
-  tesht.InitModule timestamp
-
   local -A case1=(
     [name]='given got does not match want, output a message and return an error'
     [args]='(no match)'
@@ -24,46 +20,46 @@ use this line to update want to match:
     want='no'"
   )
 
+  local -A case2=(
+    [name]='given got matches want, output nothing'
+    [args]='(match match)'
+    [want]=''
+  )
+
   # subtest runs each test case
   subtest() {
     local casename=$1
 
     ## arrange
-    unset -v want wantrc
+    local wantrc=0
     eval "$(tesht.Inherit $casename)"
-    [[ -v wantrc ]] || local wantrc=0
 
     ## act
     local got rc
     got=$(tesht.AssertGot "${args[@]}") && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertRC $rc $wantrc "$got" || return
+    ! tesht.AssertRC $rc $wantrc ''
     tesht.AssertGot "$got" "$want"
   }
 
-  tesht.Run test_tesht.AssertGot ${!case@}
+  tesht.Run test_AssertGot ${!case@}
 }
 
 # test_in tests that the in function works.
 test_in() {
-  ## arrange
-  # When running this test, the outer tesht instance is protected from modifications by employing a subshell,
-  # so we can modify its dependencies safely.
-  tesht.InitModule timestamp
-
   local -A case1=(
     [name]='detect an item in an array'
     [values]='(a b c)'
     [item]='b'
-    [want]=0
+    [wantrc]=0
   )
 
   local -A case2=(
     [name]='not detect an item not in an array'
     [values]='(a b c)'
     [item]='d'
-    [want]=1
+    [wantrc]=1
   )
 
   # subtest runs each test case
@@ -74,33 +70,33 @@ test_in() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got
+    local rc
     tesht.in values $item && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertRC $rc $want ''
+    tesht.AssertRC $rc $wantrc ''
   }
 
-  tesht.Run test_tesht.in ${!case@}
+  tesht.Run test_in ${!case@}
 }
 
 # test_test tests that the test function tests tests.
 test_test() {
-  ## arrange
-  tesht.InitModule timestamp
-
   local cr=$'\r'            # carriage return
   local tab=$'\t'
 
-  local g=$'\E[38;5;82m'    # green
-  local y=$'\E[38;5;220m'   # yellow
+  local green=$'\E[38;5;82m'
+  local yellow=$'\E[38;5;220m'
 
-  local r=$'\E[0m'        # reset
+  local reset=$'\E[0m'
+
+  local pass=${green}PASS$reset
+  local run=${yellow}RUN$reset
 
   local -A case1=(
     [name]='print a pass message for success'
     [funcname]='testSuccess'
-    [want]="=== ${y}RUN$r$tab$tab${tab}testSuccess$cr--- ${g}PASS$r${tab}0ms${tab}testSuccess"
+    [want]="=== $run$tab$tab${tab}testSuccess$cr--- $pass${tab}0ms${tab}testSuccess"
   )
 
   # subtest runs each test case
@@ -108,6 +104,8 @@ test_test() {
     local casename=$1
 
     ## arrange
+    tesht.InitModule timestamp
+    local wantrc=0
     eval "$(tesht.Inherit $casename)"
 
     ## act
@@ -115,6 +113,7 @@ test_test() {
     got=$(tesht.test $funcname) && rc=$? || rc=$?
 
     ## assert
+    ! tesht.AssertRC $rc $wantrc ''
     tesht.AssertGot "$got" "$want"
   }
 
@@ -123,9 +122,6 @@ test_test() {
 
 # test_subtests_tesht.test tests that the test function tests.
 test_test_subtests() {
-  ## arrange
-  tesht.InitModule timestamp
-
   local -A case1=(
     [name]='count two subtests'
     [funcname]='testTwoSubtests'
@@ -157,7 +153,7 @@ test_test_subtests() {
     tesht.AssertGot $got $want
   }
 
-  tesht.Run test_subtest_tesht.test ${!case@}
+  tesht.Run test_test_subtests ${!case@}
 }
 
 # Mock test functions for different scenarios

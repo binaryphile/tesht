@@ -21,44 +21,38 @@ IFS=$'\n'
 
 declare -i PassCountT=0 TestCountT=0    # -i enables arithmetic operations
 
-Green=$'\033[38;5;82m'
-Red=$'\033[38;5;196m'
-Yellow=$'\033[38;5;220m'
+GreenT=$'\033[38;5;82m'
+RedT=$'\033[38;5;196m'
+YellowT=$'\033[38;5;220m'
 
-Reset=$'\033[0m'
+ResetT=$'\033[0m'
 
-Fail="${Red}FAIL$Reset"
-Fatal="${Red}FATAL$Reset"
-Pass="${Green}PASS$Reset"
-Run="${Yellow}RUN$Reset"
+FailT=${RedT}FAIL$ResetT
+FatalT=${RedT}FATAL$ResetT
+PassT=${GreenT}PASS$ResetT
+RunT=${YellowT}RUN$ResetT
 
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 # This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
 tesht.MainTemplate() {
-  local TestnameListT=$1 FilenamesT=( $2 )
+  local testnameList=$1 filenames=( $2 )
 
   local startTime=$(TIMEFUNCNAME) failed=0
 
-  for filename in ${FilenamesT[*]}; do
-    tesht.testFile $filename "$TestnameListT" || failed=1
+  for filename in ${filenames[*]}; do
+    tesht.testFile $filename "$testnameList" || failed=1
   done
 
   local endTime=$(TIMEFUNCNAME)
-  local d=$(( endTime - startTime ))
+  local duration=$(( endTime - startTime ))ms
 
   local columns='%s\t\t%s\n'
-  if (( failed )); then
-    printf $columns $Fail $(tesht.duration $d)
-  else
-    printf $columns $Pass $(tesht.duration $d)
-  fi
+  (( failed )) && local result=$FailT || local result=$PassT
+  printf $columns $result $duration
 
   echo $PassCountT/$TestCountT
 }
-
-# tesht.duration prints a duration.
-tesht.duration() { printf '%dms' $1; }
 
 # tesht.in returns whether item is in array.
 tesht.in() {
@@ -108,7 +102,7 @@ tesht.testTemplate() {
     [[ $(declare -f $testname) == *tesht.Run* ]] && hasSubtests=1
 
     local columns='=== %s\t\t\t%s'
-    (( hasSubtests )) || printf $columns $Run $testname
+    (( hasSubtests )) || printf $columns $RunT $testname
 
     $testname && rc=$? || rc=$?
     (( hasSubtests )) && echo "$subtestTestCount $subtestPassCount" >$tmpname
@@ -122,23 +116,25 @@ tesht.testTemplate() {
   }
 
   local endTime=$(TIMEFUNCNAME)
-  local d=$(( endTime - startTime ))
-  local duration=$(tesht.duration $d)
+  local duration=$(( endTime - startTime ))ms
 
-  if (( subtestTestCount > 0 )); then
+  if (( hasSubtests )); then
     TestCountT+=$subtestTestCount
     PassCountT+=$subtestPassCount
+
+    return
   else
     TestCountT+=1
   fi
+
   local columns='\r--- %s\t%s\t%s\n'
   case $rc in
     0 )
-      (( hasSubtests)) || printf $columns $Pass $duration $testname
-      (( subtestTestCount == 0 )) && PassCountT+=1
+      printf $columns $PassT $duration $testname
+      PassCountT+=1
       ;;
-    128 ) (( hasSubtests)) || printf $columns $Fatal $duration $testname; return 128 ;;
-    *   ) (( hasSubtests)) || printf $columns $Fail $duration $Yellow$testname$Reset; failed=1 ;;
+    128 ) printf $columns $FatalT $duration $testname; return 128;;
+    *   ) printf $columns $FailT $duration $YellowT$testname$ResetT; failed=1;;
   esac
 }
 
@@ -160,8 +156,8 @@ tesht.testFile() {
   return $failed
 }
 
-# tesht.timestamp returns the current time in Unix time as milliseconds.
-tesht.timestamp() {
+# tesht.Timestamp returns the current time in Unix time as milliseconds.
+tesht.Timestamp() {
   local whole fraction
   # EPOCHREALTIME reports second fractions to nano precision
   IFS=. read -r whole fraction <<<$EPOCHREALTIME
@@ -191,13 +187,9 @@ END
 }
 
 tesht.AssertRC() {
-  local rc=$1 wantrc=$2 got=${3:-}
+  local rc=$1 wantrc=$2
 
-  (( rc == wantrc )) && return
-  case $got in
-    ''  ) tesht.Log "error = $rc, want: $wantrc";;
-    *   ) tesht.Log "error = $rc, want: $wantrc" "$got";;
-  esac
+  (( rc == wantrc )) || tesht.Log "error = $rc, want: $wantrc"
 }
 
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
@@ -235,14 +227,6 @@ tesht.portIsInUse() {
   local func=$(declare -f $templatename)
   func=${func/$templatename/$funcname}
   eval "${func//$token/$value}"
-}
-
-# tesht.tab indents each line of input with a tab.
-tesht.tab() {
-  local line
-  while read -r line; do
-    printf '\t%s\n' $line
-  done
 }
 
 # tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
@@ -363,37 +347,25 @@ tesht.runSubtestTemplate() {
   local -n map=$mapname
   local testname=$testname/${map[name]}
 
-  local green=$'\033[38;5;82m'
-  local red=$'\033[38;5;196m'
-  local yellow=$'\033[38;5;220m'
-
-  local reset=$'\033[0m'
-
-  local fail="${red}FAIL$reset"
-  local fatal="${red}FATAL$reset"
-  local pass="${green}PASS$reset"
-  local run="${yellow}RUN$reset"
-
   local columns='=== %s\t\t\t%s'
-  printf $columns $run $testname
+  printf $columns $RunT $testname
 
   local startTime=$(TIMEFUNCNAME) rc
   (subtest $mapname) && rc=$? || rc=$?
   local endTime=$(TIMEFUNCNAME)
 
-  local duration
-  printf -v duration '%dms' $(( endTime - startTime ))
+  local duration=$(( endTime - startTime ))ms
 
-  subtestTestCount+=1   # locally declared by caller
+  subtestTestCount+=1   # in caller's scope
   columns='\r--- %s\t%s\t%s\n'
   case $rc in
     0   )
-      printf $columns $pass $duration $testname
-      subtestPassCount+=1   # locally declared by caller
+      printf $columns $PassT $duration $testname
+      subtestPassCount+=1   # in caller's scope
       ;;
-    128 ) printf $columns $fatal $duration $testname;;
+    128 ) printf $columns $FatalT $duration $testname;;
 
-    *   ) printf $columns $fail $duration $yellow$testname$reset;;
+    *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
   esac
 
   return $rc
@@ -417,5 +389,5 @@ unset -v FilenamesT
 return 2>/dev/null
 set -euf
 
-tesht.InitModule tesht.timestamp
+tesht.InitModule tesht.Timestamp
 tesht.Main "$TestnameListT" "$FilenameListT"
