@@ -137,17 +137,6 @@ tesht.MktempDir() {
   echo $dir
 }
 
-# tesht.newFunc creates a new function from a template function.
-# The template function contains a token to be replaced, representing a dependency.
-# The template is renamed to funcname and evaluated with the token substituted beforehand.
-tesht.newFunc() {
-  local funcname=$1 templatename=$2 token=$3 value=$4
-
-  local func=$(declare -f $templatename)
-  func=${func/$templatename/$funcname}
-  eval "${func//$token/$value}"
-}
-
 # tesht.portIsInUse detects whether port is already in use.
 tesht.portIsInUse() {
   local pid rc
