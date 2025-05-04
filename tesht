@@ -30,20 +30,21 @@ FatalT=${RedT}FATAL$ResetT
 PassT=${GreenT}PASS$ResetT
 RunT=${YellowT}RUN$ResetT
 
+UnixMilliFuncT=tesht.UnixMilli
+
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
-# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
-tesht.MainTemplate() {
+tesht.Main() {
   local testnameList=$1 filenames=( $2 )
 
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
-  local startTime=$(TIMEFUNCNAME)
+  local startTime=$($UnixMilliFuncT)
 
   for filename in ${filenames[*]}; do
     tesht.testFile $filename "$testnameList" || failed=1
   done
 
-  local endTime=$(TIMEFUNCNAME)
+  local endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   local columns='%s\t\t%s\n'
@@ -111,15 +112,6 @@ tesht.Inherit() {
   for KEY in ${!MAP[*]}; do
     tesht.declareVar $KEY "${MAP[$KEY]}"
   done
-}
-
-# tesht.InitModule sets up dependencies.
-tesht.InitModule() {
-  local timeFuncname=$1
-
-  tesht.newFunc tesht.Main tesht.MainTemplate TIMEFUNCNAME $timeFuncname
-  tesht.newFunc tesht.test tesht.testTemplate TIMEFUNCNAME $timeFuncname
-  tesht.newFunc tesht.runSubtest tesht.runSubtestTemplate TIMEFUNCNAME $timeFuncname
 }
 
 # tesht.listTestnames lists the name of any functions in $1.
@@ -196,8 +188,7 @@ tesht.Run() {
 # It returns an error result code if there was failure.
 # It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
-# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
-tesht.runSubtestTemplate() {
+tesht.runSubtest() {
   local testname=$1 mapname=$2
 
   local -n map=$mapname
@@ -206,10 +197,9 @@ tesht.runSubtestTemplate() {
   local columns='=== %s\t\t\t%s'
   printf $columns $RunT $testname
 
-  local startTime=$(TIMEFUNCNAME) rc
+  local startTime=$($UnixMilliFuncT) rc
   (subtest $mapname) && rc=$? || rc=$?
-  local endTime=$(TIMEFUNCNAME)
-
+  local endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   subtestTestCount+=1   # in caller's scope
@@ -259,11 +249,10 @@ tesht.StartHttpServer() {
 }
 
 # tesht.test tests the named function.
-# This template is instantiated with tesht.newFunc to introduce TIMEFUNCNAME.
-tesht.testTemplate() {
+tesht.test() {
   local testname=$1
 
-  local startTime=$(TIMEFUNCNAME)
+  local startTime=$($UnixMilliFuncT)
 
   local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
   local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
@@ -286,7 +275,7 @@ tesht.testTemplate() {
     rm -f $tmpname
   }
 
-  local endTime=$(TIMEFUNCNAME)
+  local endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   if (( hasSubtests )); then
@@ -353,5 +342,4 @@ unset -v FilenamesT
 return 2>/dev/null
 set -euf
 
-tesht.InitModule tesht.UnixMilli
 tesht.Main "$TestnameListT" "$FilenameListT"

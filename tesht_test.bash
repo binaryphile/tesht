@@ -1,5 +1,7 @@
 # Because we are being run by tesht, it is already loaded and doesn't need to be sourced.
 NL=$'\n'
+CR=$'\r'
+Tab=$'\t'
 
 # deterministic mock for time
 mockUnixMilli() { return 0; }
@@ -82,24 +84,13 @@ test_in() {
   tesht.Run ${!case@}
 }
 
-CR=$'\r'  # carriage return
-Tab=$'\t'
-
-Green=$'\E[38;5;82m'
-Yellow=$'\E[38;5;220m'
-
-Reset=$'\E[0m'
-
-Pass=${Green}PASS$Reset
-Run=${Yellow}RUN$Reset
-
 # test_Main tests that Main finds a test file executes it.
 test_Main() {
   local -A case1=(
     [name]='run a test file'
     [command]="tesht.Main '' dummy_test.bash"
-    [want]="=== $Run$Tab$Tab${Tab}test_dummy$CR--- $Pass${Tab}0ms${Tab}test_dummy
-$Pass$Tab${Tab}0ms
+    [want]="=== $RunT$Tab$Tab${Tab}test_dummy$CR--- $PassT${Tab}0ms${Tab}test_dummy
+$PassT$Tab${Tab}0ms
 1/1"
   )
 
@@ -108,9 +99,7 @@ $Pass$Tab${Tab}0ms
 
     ## arrange
 
-    # make time deterministic
-    tesht.InitModule mockUnixMilli
-
+    UnixMilliFuncT=mockUnixMilli
     eval "$(tesht.Inherit $casename)"
 
     # temporary directory
@@ -136,7 +125,7 @@ test_test() {
   local -A case1=(
     [name]='print a pass message for success'
     [funcname]='testSuccess'
-    [want]="=== $Run$Tab$Tab${Tab}testSuccess$CR--- $Pass${Tab}0ms${Tab}testSuccess"
+    [want]="=== $RunT$Tab$Tab${Tab}testSuccess$CR--- $PassT${Tab}0ms${Tab}testSuccess"
   )
 
   # subtest runs each test case
@@ -144,7 +133,7 @@ test_test() {
     local casename=$1
 
     ## arrange
-    tesht.InitModule mockUnixMilli
+    UnixMilliFuncT=mockUnixMilli
     local wantrc=0
     eval "$(tesht.Inherit $casename)"
 
