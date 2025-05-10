@@ -37,13 +37,13 @@ cmd.badges() {
   cmd.cover
   cmd.lines
 
-  makeBadge "version" $(<VERSION) "#007ec6" assets/version.svg
+  makeBadge version $(<VERSION) "#007ec6" assets/version.svg
   echo "made version badge"
 }
 
 # cmd.code runs the current IDE
 cmd.code() {
-  (( IN_NIX_DEVELOP )) || runFlake "$0" code
+  (( IN_NIX_DEVELOP )) || runFlake
   command -v cursor &>/dev/null && exec cursor .
   code .
 }
@@ -52,7 +52,7 @@ cmd.code() {
 # It parses the result from kcov's output directory.
 # The badges appear in README.md.
 cmd.cover() {
-  (( IN_NIX_DEVELOP )) || runFlake "$0" cover
+  (( IN_NIX_DEVELOP )) || runFlake
   command -v kcov &>/dev/null || { echo "kcov not found"; exit 1; }   # tool not supported on mac
   kcov --include-path tesht kcov tesht &>/dev/null
   local filenames=( $(mk.Glob kcov/tesht.*/coverage.json) )
@@ -65,7 +65,7 @@ cmd.cover() {
 
 # cmd.gif creates a gif showing a sample run for README.md.
 cmd.gif() {
-  (( IN_NIX_DEVELOP )) || runFlake "$0" gif
+  (( IN_NIX_DEVELOP )) || runFlake
   command -v asciinema &>/dev/null || { echo "asciinema not found"; exit 1; }   # tool not supported on mac
   asciinema rec -c '/usr/bin/bash -c tesht' tesht.cast
   agg --speed 0.1 tesht.cast assets/tesht.gif
@@ -75,9 +75,9 @@ cmd.gif() {
 
 # cmd.lines determines the number of lines of source and makes a badge.
 cmd.lines() {
-  (( IN_NIX_DEVELOP )) || runFlake "$0" lines
-  local lines=$(scc -f csv tesht | tail -n 1 | { IFS=, read -r language rawLines lines rest; echo $lines; })
-  makeBadge "source lines" $(addCommas $lines) "#007ec6" assets/lines.svg
+  (( IN_NIX_DEVELOP )) || runFlake
+  local lineCount=$(scc -f csv tesht | tail -n 1 | { IFS=, read -r language throwaway lineCount rest; echo $lineCount; })
+  makeBadge "source lines" $(addCommas $lineCount) "#007ec6" assets/lines.svg
   echo "made source lines badge"
 }
 
@@ -146,7 +146,7 @@ END
 }
 
 runFlake() {
-  IN_NIX_DEVELOP=1 exec nix develop --command "$@"
+  IN_NIX_DEVELOP=1 exec nix develop --command "$Prog" "${FUNCNAME[1]#cmd.}"
 }
 
 ## globals
