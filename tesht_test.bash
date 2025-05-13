@@ -10,6 +10,7 @@ mockUnixMilli() { return 0; }
 test_Main() {
   local -A case1=(
     [name]='run passing and failing tests from a file'
+
     [command]="tesht.Main '' dummy_test.bash"
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_failure$ResetT
@@ -18,10 +19,10 @@ $FailT$Tab${Tab}0ms
 2/3"
   )
 
-
   local -A case2=(
     [name]='run two requested tests and skip a third'
-    [command]="tesht.Main $'test_success\ntest_failure' dummy_test.bash"
+
+    [command]='tesht.Main "test_success${NL}test_failure" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms$Tab${YellowT}test_failure$ResetT
 $FailT$Tab${Tab}0ms
@@ -42,10 +43,10 @@ $FailT$Tab${Tab}0ms
     cd $dir
 
     # test file
-    echoln  "test_success() { :; }" \
-            "test_failure() { return 1; }" \
-            "test_thirdWheel() { :; }" \
-            >dummy_test.bash
+    echoLines "test_success() { :; }" \
+      "test_failure() { return 1; }" \
+      "test_thirdWheel() { :; }" \
+      >dummy_test.bash
 
     ## act
     local got=$(eval "$command")
@@ -57,7 +58,46 @@ $FailT$Tab${Tab}0ms
   tesht.Run ${!case@}
 }
 
-echoln() {
+# test_AssertGot tests that AssertGot identifies whether two inputs are equal.
+test_AssertGot() {
+  local -A case1=(
+    [name]='return 0 and no output if inputs match'
+
+    [command]='tesht.AssertGot match match'
+    [want]=''
+    [wantrc]=0
+  )
+
+  local -A case2=(
+    [name]='return 1 and show a diff if inputs do not match'
+
+    [command]='tesht.AssertGot no match'
+    [want]=$'\n\ngot does not match want:\n< no\n---\n> match\n\nuse this line to update want to match:\n    want=\'no\''
+    [wantrc]=1
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    UnixMilliFuncT=mockUnixMilli
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got # can't combine with below when getting rc
+    got=$(eval "$command") && local rc=$? || local rc=$?
+
+    ## assert
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
+echoLines() {
   local IFS=$NL
   echo "$*"
 }

@@ -59,7 +59,6 @@ tesht.AssertGot() {
   local got=$1 want=$2
 
   [[ $got == $want ]] && return
-
   cat <<END
 
 
@@ -77,7 +76,9 @@ END
 tesht.AssertRC() {
   local rc=$1 wantrc=$2
 
-  (( rc == wantrc )) || tesht.Log "error = $rc, want: $wantrc"
+  (( rc == wantrc )) && return
+  tesht.Log "error: rc = $rc, want: $wantrc"
+  return 1
 }
 
 tesht.declareVar() {
