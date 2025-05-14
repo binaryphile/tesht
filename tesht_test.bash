@@ -97,6 +97,45 @@ test_AssertGot() {
   tesht.Run ${!case@}
 }
 
+# test_AssertRC tests that AssertRC identifies whether two result codes are equal.
+test_AssertRC() {
+  local -A case1=(
+    [name]='return 0 and no output if inputs match'
+
+    [command]='tesht.AssertRC 1 1'
+    [want]=''
+    [wantrc]=0
+  )
+
+  local -A case2=(
+    [name]='return 1 and show an error message if inputs do not match'
+
+    [command]='tesht.AssertRC 0 1'
+    [want]=$'\n\nerror: rc = 0, want: 1'
+    [wantrc]=1
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    UnixMilliFuncT=mockUnixMilli
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got # can't combine with below when getting rc
+    got=$(eval "$command") && local rc=$? || local rc=$?
+
+    ## assert
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
 echoLines() {
   local IFS=$NL
   echo "$*"
