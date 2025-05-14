@@ -240,14 +240,14 @@ tesht.StartHttpServer() {
 
 # tesht.test tests the named function.
 tesht.test() {
-  local testname=$1
+  local testSource=$1 testname=$2
 
   local startTime=$($UnixMilliFuncT)
 
   local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
   local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
   (
-    source $filename
+    eval "$testSource"
 
     [[ $(declare -f $testname) == *tesht.Run* ]] && hasSubtests=1
 
@@ -296,10 +296,11 @@ tesht.testFile() {
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
+  local testSource=$(<$filename)
   for testname in ${testsInFile[*]}; do
     case ${#requests[*]} in
-      0 ) tesht.test $testname;;
-      * ) tesht.in requests $testname && tesht.test $testname
+      0 ) tesht.test "$testSource" $testname;;
+      * ) tesht.in requests $testname && tesht.test "$testSource" $testname
     esac
   done
 

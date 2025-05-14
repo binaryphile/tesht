@@ -123,8 +123,8 @@ test_AssertRC() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got # can't combine with below when getting rc
-    got=$(eval "$command") && local rc=$? || local rc=$?
+    local got rc # can't combine with below when getting rc
+    got=$(eval "$command") && rc=$? || rc=$?
 
     ## assert
     tesht.Softly <<'    END'
@@ -135,6 +135,36 @@ test_AssertRC() {
 
   tesht.Run ${!case@}
 }
+
+# test_test tests that test tests.
+test_test() {
+  local -A case1=(
+    [name]='report a failing subtest'
+
+    [command]='tesht.test "$testSource" test_fail'
+    [testSource]='test_fail() { return 1; }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fail$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail$ResetT"
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    UnixMilliFuncT=mockUnixMilli
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got rc
+    got=$(eval "$command") && rc=$? || rc=$?
+
+    ## assert
+    tesht.AssertGot "$got" "$want"
+  }
+
+  tesht.Run ${!case@}
+}
+
+## helpers
 
 echoLines() {
   local IFS=$NL
