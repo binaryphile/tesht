@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
-(( IN_NIX_DEVELOP )) || IN_NIX_DEVELOP=1 exec nix develop --command "$0" "$@"
-
 Prog=$(basename "$0")   # match what the user called
-Version=0.1
+Version=0.2
 
 read -rd '' Usage <<END
 Usage:
@@ -12,16 +10,15 @@ Usage:
 
   Commands:
 
-  The following commands update report.json:
-    cover -- run kcov and record results
-    lines -- run scc and record results
-    test -- run tesht and record results
-
+    cover -- run coverage and record results
+    lines -- run source line count and record results
+    test -- run tests and record results
     badges -- run all three and create badges from the results
 
+    code -- run the project IDE
     gif -- create a gif of the tool being run
 
-  Options (if multiple, must be provided as separate flags):
+  Options:
 
     -h | --help     show this message and exit
     -v | --version  show the program version and exit
@@ -33,18 +30,28 @@ END
 # cmd.badges renders badges for program version, source lines, tests passed and coverage.
 # It updates the latter three statistics beforehand.
 cmd.badges() {
+  (( IN_NIX_DEVELOP )) || runInNixDevelop
   cmd.test
   cmd.cover
   cmd.lines
 
-  makeBadge "version" $(<VERSION) "#007ec6" assets/version.svg
+  makeBadge version $(<VERSION) "#007ec6" assets/version.svg
   echo "made version badge"
+}
+
+# cmd.code runs the current IDE
+cmd.code() {
+  (( IN_NIX_DEVELOP )) || runInNixDevelop
+  command -v cursor &>/dev/null && exec cursor .
+  code .
 }
 
 # cmd.cover runs coverage testing and makes a badge.
 # It parses the result from kcov's output directory.
 # The badges appear in README.md.
 cmd.cover() {
+  (( IN_NIX_DEVELOP )) || runInNixDevelop
+  command -v kcov &>/dev/null || { echo "kcov not found"; exit 1; }   # tool not supported on mac
   kcov --include-path tesht kcov tesht &>/dev/null
   local filenames=( $(mk.Glob kcov/tesht.*/coverage.json) )
   (( ${#filenames[*]} == 1 )) || mk.Fatal 'could not identify report file' 1
@@ -54,8 +61,16 @@ cmd.cover() {
   echo "made coverage badge"
 }
 
+cmd.code() {
+  (( IN_NIX_DEVELOP )) || runInNixDevelop
+  command -v cursor &>/dev/null && { mk.Cue cursor .; exit; }
+  mk.Cue code .
+}
+
 # cmd.gif creates a gif showing a sample run for README.md.
 cmd.gif() {
+  (( IN_NIX_DEVELOP )) || runInNixDevelop
+  command -v asciinema &>/dev/null || { echo "asciinema not found"; exit 1; }   # tool not supported on mac
   asciinema rec -c '/usr/bin/bash -c tesht' tesht.cast
   agg --speed 0.1 tesht.cast assets/tesht.gif
   rm tesht.cast
@@ -64,8 +79,9 @@ cmd.gif() {
 
 # cmd.lines determines the number of lines of source and makes a badge.
 cmd.lines() {
-  local lines=$(scc -f csv tesht | tail -n 1 | { IFS=, read -r language rawLines lines rest; echo $lines; })
-  makeBadge "source lines" $(addCommas $lines) "#007ec6" assets/lines.svg
+  (( IN_NIX_DEVELOP )) || runInNixDevelop
+  local lineCount=$(scc -f csv tesht | tail -n 1 | { IFS=, read -r language throwaway lineCount rest; echo $lineCount; })
+  makeBadge "source lines" $(addCommas $lineCount) "#007ec6" assets/lines.svg
   echo "made source lines badge"
 }
 
@@ -133,13 +149,18 @@ makeBadge() {
 END
 }
 
+# runInNixDevelop runs the current command after loading nix dependencies
+runInNixDevelop() {
+  IN_NIX_DEVELOP=1 exec nix develop --command ./$Prog ${FUNCNAME[1]#cmd.} "$@"
+}
+
 ## globals
 
 ## boilerplate
 
 source ~/.local/lib/mk.bash 2>/dev/null ||
   eval "$(curl -fsSL https://raw.githubusercontent.com/binaryphile/mk.bash/develop/mk.bash)" ||
- { echo 'fatal: mk.bash not found' >&2; exit 1; }
+  { echo 'fatal: mk.bash not found' >&2; exit 1; }
 
 # enable safe expansion
 IFS=$'\n'

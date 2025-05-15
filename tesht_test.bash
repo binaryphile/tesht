@@ -1,174 +1,206 @@
 # Because we are being run by tesht, it is already loaded and doesn't need to be sourced.
 NL=$'\n'
+CR=$'\r'
+Tab=$'\t'
 
 # deterministic mock for time
-timestamp() { return 0; }
+mockUnixMilli() { return 0; }
 
-# test_AssertGot returns an error and a help message if got != want.
-# Otherwise it does nothing.
-test_AssertGot() {
+# test_Main tests that Main finds a test file executes it.
+test_Main() {
   local -A case1=(
-    [name]='given got does not match want, output a message and return an error'
-    [args]='(no match)'
-    [wantrc]=1
-    [want]="$NL${NL}got does not match want:
-< no
----
-> match
+    [name]='run passing and failing tests from a file'
 
-use this line to update want to match:
-    want='no'"
+    [command]="tesht.Main '' dummy_test.bash"
+    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+=== $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_failure$ResetT
+=== $RunT$Tab$Tab${Tab}test_thirdWheel$CR--- $PassT${Tab}0ms${Tab}test_thirdWheel
+$FailT$Tab${Tab}0ms
+2/3"
   )
 
   local -A case2=(
-    [name]='given got matches want, output nothing'
-    [args]='(match match)'
-    [want]=''
+    [name]='run two requested tests and skip a third'
+
+    [command]='tesht.Main "test_success${NL}test_failure" dummy_test.bash'
+    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+=== $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms$Tab${YellowT}test_failure$ResetT
+$FailT$Tab${Tab}0ms
+1/2"
   )
 
-  # subtest runs each test case
   subtest() {
     local casename=$1
 
     ## arrange
-    local wantrc=0
+
+    UnixMilliFuncT=mockUnixMilli
     eval "$(tesht.Inherit $casename)"
 
+    # temporary directory
+    local dir
+    dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
+    trap "rm -rf $dir" EXIT               # always clean up
+    cd $dir
+
+    # test file
+    echoLines "test_success() { :; }" \
+      "test_failure() { return 1; }" \
+      "test_thirdWheel() { :; }" \
+      >dummy_test.bash
+
     ## act
-    local got rc
-    got=$(tesht.AssertGot "${args[@]}") && rc=$? || rc=$?
+    local got=$(eval "$command")
 
     ## assert
-    ! tesht.AssertRC $rc $wantrc ''
     tesht.AssertGot "$got" "$want"
   }
 
-  tesht.Run test_AssertGot ${!case@}
+  tesht.Run ${!case@}
 }
 
-# test_in tests that the in function works.
-test_in() {
+# test_AssertGot tests that AssertGot identifies whether two inputs are equal.
+test_AssertGot() {
   local -A case1=(
-    [name]='detect an item in an array'
-    [values]='(a b c)'
-    [item]='b'
+    [name]='return 0 and no output if inputs match'
+
+    [command]='tesht.AssertGot match match'
+    [want]=''
     [wantrc]=0
   )
 
   local -A case2=(
-    [name]='not detect an item not in an array'
-    [values]='(a b c)'
-    [item]='d'
+    [name]='return 1 and show a diff if inputs do not match'
+
+    [command]='tesht.AssertGot no match'
+    [want]=$'\n\ngot does not match want:\n< no\n---\n> match\n\nuse this line to update want to match:\n    want=\'no\''
     [wantrc]=1
   )
 
-  # subtest runs each test case
   subtest() {
     local casename=$1
 
     ## arrange
+    UnixMilliFuncT=mockUnixMilli
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local rc
-    tesht.in values $item && rc=$? || rc=$?
+    local got # can't combine with below when getting rc
+    got=$(eval "$command") && local rc=$? || local rc=$?
 
     ## assert
-    tesht.AssertRC $rc $wantrc ''
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
   }
 
-  tesht.Run test_in ${!case@}
+  tesht.Run ${!case@}
 }
 
-# test_test tests that the test function tests tests.
-test_test() {
-  local cr=$'\r'            # carriage return
-  local tab=$'\t'
-
-  local green=$'\E[38;5;82m'
-  local yellow=$'\E[38;5;220m'
-
-  local reset=$'\E[0m'
-
-  local pass=${green}PASS$reset
-  local run=${yellow}RUN$reset
-
+# test_AssertRC tests that AssertRC identifies whether two result codes are equal.
+test_AssertRC() {
   local -A case1=(
-    [name]='print a pass message for success'
-    [funcname]='testSuccess'
-    [want]="=== $run$tab$tab${tab}testSuccess$cr--- $pass${tab}0ms${tab}testSuccess"
+    [name]='return 0 and no output if inputs match'
+
+    [command]='tesht.AssertRC 1 1'
+    [want]=''
+    [wantrc]=0
   )
 
-  # subtest runs each test case
+  local -A case2=(
+    [name]='return 1 and show an error message if inputs do not match'
+
+    [command]='tesht.AssertRC 0 1'
+    [want]=$'\n\nerror: rc = 0, want: 1'
+    [wantrc]=1
+  )
+
   subtest() {
     local casename=$1
 
     ## arrange
-    tesht.InitModule timestamp
-    local wantrc=0
+    UnixMilliFuncT=mockUnixMilli
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got rc # can't combine with below when getting rc
+    got=$(eval "$command") && rc=$? || rc=$?
+
+    ## assert
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
+# test_Inherit tests that Inherit creates an array from array notation when a key is plural.
+test_Inherit() {
+  ## arrange
+  local -A map=([values]='( 0 1 )')
+
+  ## act
+  local got rc
+  eval "$(tesht.Inherit map)" && rc=$? || rc=$?
+  got=$(declare -p values)
+
+  ## assert
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 0
+    tesht.AssertGot "$got" 'declare -a values=([0]="0" [1]="1")'
+  END
+}
+
+# test_test tests that test tests.
+test_test() {
+  local -A case1=(
+    [name]='report a failing subtest'
+
+    [command]='tesht.test "$testSource" test_fail'
+    [testSource]='test_fail() {
+      local -A case=([name]=slug)
+      subtest() { return 1; }
+      tesht.Run case
+    }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fail/slug$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail/slug$ResetT"
+  )
+
+  local -A case2=(
+    [name]='report a fatal subtest'
+
+    [command]='tesht.test "$testSource" test_fatal'
+    [testSource]='test_fatal() {
+      local -A case=([name]=slug)
+      subtest() { return 128; }
+      tesht.Run case
+    }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fatal/slug$CR--- $FatalT${Tab}0ms${Tab}${YellowT}test_fatal/slug$ResetT"
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    UnixMilliFuncT=mockUnixMilli
     eval "$(tesht.Inherit $casename)"
 
     ## act
     local got rc
-    got=$(tesht.test $funcname) && rc=$? || rc=$?
+    got=$(eval "$command") && rc=$? || rc=$?
 
     ## assert
-    ! tesht.AssertRC $rc $wantrc ''
     tesht.AssertGot "$got" "$want"
   }
 
-  tesht.Run test_tesht.test ${!case@}
+  tesht.Run ${!case@}
 }
 
-# test_subtests_tesht.test tests that the test function tests.
-test_test_subtests() {
-  local -A case1=(
-    [name]='count two subtests'
-    [funcname]='testTwoSubtests'
-    [want]=2
-  )
+## helpers
 
-  local -A case2=(
-    [name]='count one subtest'
-    [funcname]='testOneSubtest'
-    [want]=1
-  )
-
-  # subtest runs each test case
-  subtest() {
-    local casename=$1
-
-    ## arrange
-    eval "$(tesht.Inherit $casename)"
-
-    ## act
-    local got
-    (
-      TestCountT=0
-      tesht.test $funcname >/dev/null
-      exit $TestCountT
-    ) && got=$? || got=$?
-
-    ## assert
-    tesht.AssertGot $got $want
-  }
-
-  tesht.Run test_test_subtests ${!case@}
+echoLines() {
+  local IFS=$NL
+  echo "$*"
 }
-
-# Mock test functions for different scenarios
-
-testTwoSubtests() {
-  subtest() { :; }                  # required
-  local -A case=([name]=slug)       # name is required
-  tesht.Run testTwoSubtests case    # it's ok to call tesht.Run with the same subtest twice
-  tesht.Run testTwoSubtests case
-}
-
-testOneSubtest() {
-  subtest() { :; }
-  local -A case=([name]=slug)
-  tesht.Run testOneSubtest case
-}
-
-testSuccess() { :; }
