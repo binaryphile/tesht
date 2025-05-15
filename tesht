@@ -160,15 +160,15 @@ tesht.portIsInUse() {
 
 # tesht.Run runs tesht.runSubtest on each test case.
 tesht.Run() {
-  local failed=0 casename
-  for casename in "$@"; do
-    tesht.runSubtest "${FUNCNAME[1]}" "$casename" || {
+  local FAILED=0 CASENAME
+  for CASENAME in "$@"; do
+    tesht.runSubtest "${FUNCNAME[1]}" "$CASENAME" || {
       (( $? == 128 )) && return 128 # fatal
-      failed=1
+      FAILED=1
     }
   done
 
-  return $failed
+  return $FAILED
 }
 
 # tesht.runSubtest runs the function `subtest` with mapname as an argument.

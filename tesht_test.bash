@@ -142,8 +142,12 @@ test_test() {
     [name]='report a failing subtest'
 
     [command]='tesht.test "$testSource" test_fail'
-    [testSource]='test_fail() { return 1; }'
-    [want]="=== $RunT$Tab$Tab${Tab}test_fail$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail$ResetT"
+    [testSource]='test_fail() {
+      local -A case=([name]=slug)
+      subtest() { return 1; }
+      tesht.Run case
+    }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fail/slug$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail/slug$ResetT"
   )
 
   subtest() {
