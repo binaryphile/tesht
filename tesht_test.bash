@@ -38,8 +38,9 @@ $FailT$Tab${Tab}0ms
     eval "$(tesht.Inherit $casename)"
 
     # temporary directory
-    local dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
-    trap "rm -rf $dir" EXIT                     # always clean up
+    local dir
+    dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
+    trap "rm -rf $dir" EXIT               # always clean up
     cd $dir
 
     # test file
@@ -136,6 +137,23 @@ test_AssertRC() {
   tesht.Run ${!case@}
 }
 
+# test_Inherit tests that Inherit creates an array from array notation when a key is plural.
+test_Inherit() {
+  ## arrange
+  local -A map=([values]='( 0 1 )')
+
+  ## act
+  local got rc
+  eval "$(tesht.Inherit map)" && rc=$? || rc=$?
+  got=$(declare -p values)
+
+  ## assert
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 0
+    tesht.AssertGot "$got" 'declare -a values=([0]="0" [1]="1")'
+  END
+}
+
 # test_test tests that test tests.
 test_test() {
   local -A case1=(
@@ -148,6 +166,18 @@ test_test() {
       tesht.Run case
     }'
     [want]="=== $RunT$Tab$Tab${Tab}test_fail/slug$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail/slug$ResetT"
+  )
+
+  local -A case2=(
+    [name]='report a fatal subtest'
+
+    [command]='tesht.test "$testSource" test_fatal'
+    [testSource]='test_fatal() {
+      local -A case=([name]=slug)
+      subtest() { return 128; }
+      tesht.Run case
+    }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fatal/slug$CR--- $FatalT${Tab}0ms${Tab}${YellowT}test_fatal/slug$ResetT"
   )
 
   subtest() {

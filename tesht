@@ -58,7 +58,7 @@ tesht.Main() {
 tesht.AssertGot() {
   local got=$1 want=$2
 
-  [[ $got == $want ]] && return
+  [[ $got == "$want" ]] && return
   cat <<END
 
 
@@ -199,7 +199,7 @@ tesht.runSubtest() {
       printf $columns $PassT $duration $testname
       subtestPassCount+=1   # in caller's scope
       ;;
-    128 ) printf $columns $FatalT $duration $testname;;
+    128 ) printf $columns $FatalT $duration $YellowT$testname$ResetT;;
 
     *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
   esac
