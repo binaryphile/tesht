@@ -198,6 +198,53 @@ test_test() {
   tesht.Run ${!case@}
 }
 
+# test_StartHttpServer tests that StartHttpServer starts a server and handles errors.
+test_StartHttpServer() {
+  local -A case1=(
+    [name]='start a server on custom port'
+
+    [arrange]='tesht.StartHttpServer 8080'
+    [act]='curl -fsSL http://localhost:8080/index.html'
+    [want]='test content'
+    [wantrc]=0
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+
+    eval "$(tesht.Inherit $casename)"
+
+    # temporary directory
+    local dir trapcmd
+    dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
+    trapcmd="rm -rf $dir"
+    trap $trapcmd EXIT     # always clean up
+    cd $dir
+
+    # Create a test file for the server to serve
+    echo "test content" >index.html
+
+    local pid
+    pid=$(eval "$arrange") || return 128  # fatal if can't start server
+    trapcmd="kill $pid; $trapcmd"
+    trap $trapcmd EXIT                    # always clean up
+
+    ## act
+    local got rc
+    got=$(eval "$act") && rc=$? || rc=$?
+
+    ## assert
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
 ## helpers
 
 echoLines() {
