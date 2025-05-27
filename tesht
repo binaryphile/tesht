@@ -35,13 +35,11 @@ UnixMilliFuncT=tesht.UnixMilli
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 tesht.Main() {
-  local testnameList=$1 filenames=( $2 )
-
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
   local startTime=$($UnixMilliFuncT)
 
   for filename in ${filenames[*]}; do
-    tesht.testFile $filename "$testnameList" || failed=1
+    tesht.testFile "$@" || failed=1
   done
 
   local endTime=$($UnixMilliFuncT)
@@ -292,15 +290,16 @@ tesht.test() {
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
-  local filename=$1 requests=( ${2:-} )
+  local filename=$1; shift
+  local testRequests=( ${2:-} )
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
   local testSource=$(<$filename)
   for testname in ${testsInFile[*]}; do
-    case ${#requests[*]} in
+    case ${#testRequests[*]} in
       0 ) tesht.test "$testSource" $testname;;
-      * ) tesht.in requests $testname && tesht.test "$testSource" $testname
+      * ) tesht.in testRequests $testname && tesht.test "$testSource" $testname
     esac
   done
 

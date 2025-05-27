@@ -11,7 +11,7 @@ test_Main() {
   local -A case1=(
     [name]='run passing and failing tests from a file'
 
-    [command]="tesht.Main '' dummy_test.bash"
+    [command]='tesht.Main dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_failure$ResetT
 === $RunT$Tab$Tab${Tab}test_thirdWheel$CR--- $PassT${Tab}0ms${Tab}test_thirdWheel
@@ -22,7 +22,7 @@ $FailT$Tab${Tab}0ms
   local -A case2=(
     [name]='run two requested tests and skip a third'
 
-    [command]='tesht.Main "test_success${NL}test_failure" dummy_test.bash'
+    [command]='tesht.Main dummy_test.bash "test_success${NL}test_failure"'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms$Tab${YellowT}test_failure$ResetT
 $FailT$Tab${Tab}0ms
