@@ -126,3 +126,54 @@ Subtests will be shown with timing and results.
 ## License
 
 MIT License
+
+
+---
+
+
+- Overview
+  - framework for testing Bash functions in scripts
+  - follows patterns from Go testing
+  - test files are named based on the file they test
+  - tests are functions with special names
+  - 
+- Features
+  - Auto-discovery of `_test.bash` files & `test_` functions
+  - Output suppression & test isolation (subshells)
+  - Per-test & suite-wide timing
+  - Table-driven testing via `tesht.Run`
+  - Built-in helpers
+    - HTTP server management (`tesht.StartHttpServer`)
+    - Temp directory creation (`tesht.MktempDir`)
+    - Assertions (`tesht.AssertGot`, `tesht.AssertRC`)
+    - Diff output formatting (`tesht.Diff`)
+    - Logging (`tesht.Log`)
+- Installation
+- Usage
+  - `tesht [test_function]`
+    - No arguments: runs all `test_*` in `*_test.bash`
+    - With function name: runs only that function & subtests
+- Example
+   - Uses `tesht.AssertGot`
+   - Output: PASS/FAIL with timing
+- Writing Testable Code
+  - Organize code into functions
+  - Structure script for function loading without execution
+    - Use `return 2>/dev/null` after function definitions
+- Table-Driven Tests
+  - Reuse test logic across cases
+  - Example: `greet_test.bash`
+    - Define cases as associative arrays
+    - Use `tesht.Inherit` and `tesht.Run`
+    - Output: subtest results with timing
+- Public Functions
+  - tesht.Run: run table-driven tests
+  - tesht.Inherit: convert array keys/values to locals
+  - tesht.AssertGot: compare actual/expected output
+  - tesht.AssertRC: check return code
+  - tesht.Diff: show unified diff
+  - tesht.Log: output message
+  - tesht.MktempDir: create temp dir
+  - tesht.StartHttpServer: start HTTP server
+- License
+  - MIT License
