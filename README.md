@@ -1,19 +1,63 @@
 # tesht — Table-Driven Testing for Bash
 
 **tesht** is a lightweight testing framework for Bash scripts, following familiar patterns
-from Go’s testing package. It allows you to write clean, maintainable, and table-driven
+from Go's testing package. It allows you to write clean, maintainable, and table-driven
 tests for your shell functions.
+
+Why test Bash?  Any or all of these reasons are good enough:
+
+- Bash code is part of your infrastructure and needs to be reliable
+- you enjoy not having to chase down regressions when writing or refactoring Bash code
+- Bash is your primary or sole programming language
+- you are beginning with Bash and want to verify intended behavior
+- you are an expert with Bash and want to verify intended behavior
+- you enjoy exploring languages with tests
 
 --------------------------------------------------------------------------------------------
 
 ## Overview
 
-- Designed for testing Bash functions directly in script files
+- Designed for testing Bash functions in your script files
 - Follows Go-style test conventions for structure and naming
-- Test files are named to match the scripts they validate (e.g., `foo.bash` →
-  `foo_test.bash`)
-- Test functions are discovered by name (e.g., `test_FooDoesBar`)
+- Test files are in the same folder and named to match the scripts they validate (e.g.,
+- `foo.bash` → `foo_test.bash`)
+- Test functions are discovered by name (e.g., `test_DoFoo`)
 - `tesht` runs all tests in the current directory or only a specific function if requested
+
+--------------------------------------------------------------------------------------------
+
+## Real-World Example
+
+This test appears in `tesht`'s own test suite:
+
+``` bash
+# test_StartHttpServer tests that StartHttpServer starts a server and handles errors.
+test_StartHttpServer() {
+  ## arrange
+
+  # temporary directory
+  local dir trapcmd
+  dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
+  cd $dir
+
+  # Create a test file for the server to serve
+  echo "test content" >index.html
+
+  local pid
+  pid=$(tesht.StartHttpServer 8080) || return 128   # fatal if can't start server
+  trap "kill $pid; $trapcmd" EXIT  # always clean up
+
+  ## act
+  local got rc
+  got=$(curl -fsSL http://localhost:8080/index.html) && rc=$? || rc=$?
+
+  ## assert
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 0
+    tesht.AssertGot "$got" "test content"
+  END
+}
+```
 
 --------------------------------------------------------------------------------------------
 
@@ -52,17 +96,6 @@ tesht [test_function]
 
 - No arguments: runs all `test_*` functions in all `*_test.bash` files
 - With a function name: runs only the named test and its subtests
-
---------------------------------------------------------------------------------------------
-
-## Example
-
-``` bash
-test_SayHello() {
-  got=$(SayHello "Alice")
-  tesht.AssertGot "Hello, Alice!" "$got"
-}
-```
 
 --------------------------------------------------------------------------------------------
 

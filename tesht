@@ -81,9 +81,15 @@ tesht.AssertRC() {
 
 tesht.declareVar() {
   local name=$1 value=$2
-  [[ $name == *s && $value == '('*')' ]] &&
+  [[ $name == *s || $name == *s_ && $value == '('*')' ]] &&
     echo "declare -a $name=${value@Q}" ||
     echo "declare $name=${value@Q}"
+}
+
+tesht.Defer() {
+  local command=$1
+  local NL=$'\n' # newline works with backgrounding (&) and legal semicolons, semicolon doesn't
+  trap "$command$NL$(tesht.existingDeferlist)" EXIT
 }
 
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
@@ -91,6 +97,13 @@ tesht.declareVar() {
 tesht.Diff() {
   local got=$1 want=$2
   diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
+}
+
+tesht.existingDeferlist() {
+  local deferlist_=$(trap -p EXIT)
+  deferlist_=${deferlist_#trap -- \'}
+  deferlist_=${deferlist_%\' EXIT}
+  echo "$deferlist_"
 }
 
 # tesht.in returns whether item is in array.
@@ -134,6 +147,8 @@ tesht.MktempDir() {
 
   [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
   echo $dir
+
+  tesht.Defer "rm -rf ${dir@Q}"
 }
 
 # tesht.portIsInUse detects whether port is already in use.
