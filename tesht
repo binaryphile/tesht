@@ -35,11 +35,13 @@ UnixMilliFuncT=tesht.UnixMilli
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
 tesht.Main() {
+  local testnames=( ${1:-} ) filenames=( ${2:-} )
+
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
   local startTime=$($UnixMilliFuncT)
 
-  for filename in ${filenames[*]}; do
-    tesht.testFile "$@" || failed=1
+  for filename in "${filenames[@]}"; do
+    tesht.testFile $filename "${testnames[@]}" || failed=1
   done
 
   local endTime=$($UnixMilliFuncT)
@@ -126,6 +128,12 @@ tesht.Inherit() {
   done
 }
 
+# tesht.ListOf joins its arguments with newlines.
+tesht.ListOf() {
+  local IFS=$'\n'
+  echo "$*"
+}
+
 # tesht.listTestnames lists the name of any functions in $1.
 # Valid function names begin the line with "test_",
 # followed by identifier characters and "()".
@@ -138,17 +146,17 @@ tesht.Log() {
   echo "$NL$NL$*"
 }
 
-# tesht.MktempDir makes a temporary directory and returns the directory name.
+# tesht.MktempDir makes a temporary directory and sets the reference variable to the directory name.
 # It returns an error if it cannot make the directory.
 tesht.MktempDir() {
-  dir=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
+  local -n DIR=$1
+  DIR=$(mktemp -d /tmp/tesht.XXXXXX) || { echo 'could not create temporary directory'; return 1; }
 
-  [[ $dir == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
+  [[ $DIR == /*/* ]] || { echo 'temporary directory does not comply with naming requirements'; return 1; }
 
-  [[ -d $dir ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
-  echo $dir
+  [[ -d $DIR ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
 
-  tesht.Defer "rm -rf ${dir@Q}"
+  tesht.Defer "rm -rf $DIR"
 }
 
 # tesht.portIsInUse detects whether port is already in use.
@@ -253,14 +261,14 @@ tesht.StartHttpServer() {
 
 # tesht.test tests the named function.
 tesht.test() {
-  local testSource=$1 testname=$2
+  local testSource_=$1 testname=$2
 
   local startTime=$($UnixMilliFuncT)
 
   local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
   local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
   (
-    eval "$testSource"
+    eval "$testSource_"
 
     [[ $(declare -f $testname) == *tesht.Run* ]] && hasSubtests=1
 
@@ -301,20 +309,20 @@ tesht.test() {
   esac
 }
 
-# tesht.testFile runs any test functions in file.
+# tesht.testFile runs any test functions in filename, or just functions listed in requests.
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
   local filename=$1; shift
-  local testRequests=( ${2:-} )
+  local requestedTests=( "$@" )
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
-  local testSource=$(<$filename)
-  for testname in ${testsInFile[*]}; do
-    case ${#testRequests[*]} in
-      0 ) tesht.test "$testSource" $testname;;
-      * ) tesht.in testRequests $testname && tesht.test "$testSource" $testname
+  local testSource_=$(<$filename)
+  for testname in ${testsInFile[@]}; do
+    case ${#requestedTests[@]} in
+      0 ) tesht.test "$testSource_" $testname;;
+      * ) tesht.in requestedTests $testname && tesht.test "$testSource_" $testname
     esac
   done
 
@@ -332,19 +340,19 @@ tesht.UnixMilli() {
 # flag to enable tracing
 [[ $1 == -x ]] && { shift; set -x; }
 
-TestnameListT=${1//,/$IFS}
-FilenameListT=${2//,/$IFS}
+TestnamelistT=${1//,/$IFS}
+FilenamelistT=${2//,/$IFS}
 
 shopt -s nullglob
 FilenamesT=( *_test.bash )
 shopt -u nullglob
 
-[[ $FilenameListT == '' ]] && FilenameListT=${FilenamesT[*]}
-[[ $FilenameListT == '' ]] && { echo "no test files found"; exit; }
+[[ $FilenamelistT == '' ]] && FilenamelistT=${FilenamesT[*]}
+[[ $FilenamelistT == '' ]] && { echo "no test files found"; exit; }
 unset -v FilenamesT
 
 # strict mode
 return 2>/dev/null
 set -euf
 
-tesht.Main "$TestnameListT" "$FilenameListT"
+tesht.Main "$TestnamelistT" "$FilenamelistT"

@@ -11,7 +11,7 @@ test_Main() {
   local -A case1=(
     [name]='run passing and failing tests from a file'
 
-    [command]='tesht.Main dummy_test.bash'
+    [command]='tesht.Main "" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_failure$ResetT
 === $RunT$Tab$Tab${Tab}test_thirdWheel$CR--- $PassT${Tab}0ms${Tab}test_thirdWheel
@@ -22,7 +22,7 @@ $FailT$Tab${Tab}0ms
   local -A case2=(
     [name]='run two requested tests and skip a third'
 
-    [command]='tesht.Main dummy_test.bash "test_success${NL}test_failure"'
+    [command]='tesht.Main "test_success${NL}test_failure" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms$Tab${YellowT}test_failure$ResetT
 $FailT$Tab${Tab}0ms
@@ -39,8 +39,7 @@ $FailT$Tab${Tab}0ms
 
     # temporary directory
     local dir
-    dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
-    trap "rm -rf $dir" EXIT               # always clean up
+    tesht.MktempDir dir || return 128  # fatal if can't make dir
     cd $dir
 
     # test file
@@ -137,6 +136,52 @@ test_AssertRC() {
   tesht.Run ${!case@}
 }
 
+# test_ListOf tests that ListOf joins arguments with newlines.
+test_ListOf() {
+  local -A case1=(
+    [name]='no arguments returns empty string'
+
+    [command]='tesht.ListOf'
+    [want]=''
+  )
+
+  local -A case2=(
+    [name]='single argument returns the argument'
+
+    [command]='tesht.ListOf "hello"'
+    [want]='hello'
+  )
+
+  local -A case3=(
+    [name]='multiple arguments joined with newlines'
+
+    [command]='tesht.ListOf "first" "second" "third"'
+    [want]=$'first\nsecond\nthird'
+  )
+
+  local -A case4=(
+    [name]='handles arguments with spaces'
+
+    [command]='tesht.ListOf "hello world" "foo bar"'
+    [want]=$'hello world\nfoo bar'
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got=$(eval "$command")
+
+    ## assert
+    tesht.AssertGot "$got" "$want"
+  }
+
+  tesht.Run ${!case@}
+}
+
 # test_Inherit tests that Inherit creates an array from array notation when a key is plural.
 test_Inherit() {
   ## arrange
@@ -203,10 +248,8 @@ test_StartHttpServer() {
   ## arrange
 
   # temporary directory
-  local dir trapcmd
-  dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
-  trapcmd="rm -rf $dir"
-  trap $trapcmd EXIT  # always clean up
+  local dir
+  tesht.MktempDir dir || return 128  # fatal if can't make dir
   cd $dir
 
   # Create a test file for the server to serve
@@ -214,7 +257,7 @@ test_StartHttpServer() {
 
   local pid
   pid=$(tesht.StartHttpServer 8080) || return 128   # fatal if can't start server
-  trap "kill $pid; $trapcmd" EXIT  # always clean up
+  tesht.Defer "kill $pid"
 
   ## act
   local got rc

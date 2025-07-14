@@ -1,212 +1,242 @@
 # tesht — Table-Driven Testing for Bash
 
-**tesht** is a lightweight testing framework for Bash scripts, following familiar patterns
-from Go's testing package. It allows you to write clean, maintainable, and table-driven
-tests for your shell functions.
+A lightweight testing framework for Bash scripts inspired by Go’s testing package. Write
+clean, maintainable table-driven tests for your shell functions with automatic test
+discovery and clear failure reporting.
 
-Why test Bash?  Any or all of these reasons are good enough:
+## Why Test Bash?
 
-- Bash code is part of your infrastructure and needs to be reliable
-- you enjoy not having to chase down regressions when writing or refactoring Bash code
-- Bash is your primary or sole programming language
-- you are beginning with Bash and want to verify intended behavior
-- you are an expert with Bash and want to verify intended behavior
-- you enjoy exploring languages with tests
-
---------------------------------------------------------------------------------------------
-
-## Overview
-
-- Designed for testing Bash functions in your script files
-- Follows Go-style test conventions for structure and naming
-- Test files are in the same folder and named to match the scripts they validate (e.g.,
-- `foo.bash` → `foo_test.bash`)
-- Test functions are discovered by name (e.g., `test_DoFoo`)
-- `tesht` runs all tests in the current directory or only a specific function if requested
-
---------------------------------------------------------------------------------------------
-
-## Real-World Example
-
-This test appears in `tesht`'s own test suite:
-
-``` bash
-# test_StartHttpServer tests that StartHttpServer starts a server and handles errors.
-test_StartHttpServer() {
-  ## arrange
-
-  # temporary directory
-  local dir trapcmd
-  dir=$(tesht.MktempDir) || return 128  # fatal if can't make dir
-  cd $dir
-
-  # Create a test file for the server to serve
-  echo "test content" >index.html
-
-  local pid
-  pid=$(tesht.StartHttpServer 8080) || return 128   # fatal if can't start server
-  trap "kill $pid; $trapcmd" EXIT  # always clean up
-
-  ## act
-  local got rc
-  got=$(curl -fsSL http://localhost:8080/index.html) && rc=$? || rc=$?
-
-  ## assert
-  tesht.Softly <<'  END'
-    tesht.AssertRC $rc 0
-    tesht.AssertGot "$got" "test content"
-  END
-}
-```
-
---------------------------------------------------------------------------------------------
+- Bash code is infrastructure and needs to be reliable
+- Prevent regressions when refactoring shell scripts
+- Verify intended behavior regardless of experience level
+- Explore and learn bash with confidence
 
 ## Features
 
-- **Automatic test discovery**: Finds and runs all `test_*` functions
-- **Isolation**: Each test runs in its own subshell
-- **Detailed results**: Displays per-test and suite-wide pass/fail status with timing
-- **Table-driven testing**: Define reusable test logic and data tables
-- **Assertions**:
-  - `tesht.AssertGot` — assert output matches expected
-  - `tesht.AssertRC` — assert return code matches expected
-- **Runtime utilities**:
-  - `tesht.StartHttpServer` — serve files via HTTP during tests
-  - `tesht.MktempDir` — safely create and clean up temporary directories
+- **Automatic discovery** of `*_test.bash` files and `test_*` functions
+- **Table-driven testing** with reusable test logic across multiple cases
+- **Test isolation** - each test runs in its own subshell
+- **Clear output** - detailed pass/fail status with timing and colored results
+- **Helpful assertions** with diff output and suggested fixes
+- **Built-in utilities** for HTTP servers, temp directories, and common test needs
 
---------------------------------------------------------------------------------------------
+## Quick Start
 
-## Installation
+1.  **Install tesht**:
 
-Place `tesht` in a directory on your `$PATH`. You can copy or symlink it:
+    ``` bash
+    cp tesht /usr/local/bin/
+    # or
+    ln -s "$PWD/tesht" ~/bin/
+    ```
+
+2.  **Make your script testable** by adding this line after your functions:
+
+    ``` bash
+    return 2>/dev/null  # allows sourcing without execution
+    ```
+
+3.  **Write a test file** (e.g., `myScript_test.bash`):
+
+    ``` bash
+    #!/usr/bin/env bash
+    source ./myScript || exit 1
+
+    test_MyFunction() {
+        local -A case1=(
+            [name]='basic functionality'
+            [input]='test input'
+            [want]='expected output'
+        )
+
+        local -A case2=(
+            [name]='edge case'
+            [input]='edge input'
+            [want]='edge output'
+        )
+
+        subtest() {
+            local casename=$1
+            eval "$(tesht.Inherit $casename)"
+
+            local got
+            got=$(MyFunction "$input")
+
+            tesht.AssertGot "$got" "$want"
+        }
+
+        tesht.Run ${!case@}
+    }
+    ```
+
+4.  **Run tests**:
+
+    ``` bash
+    tesht                    # run all tests
+    tesht test_MyFunction    # run specific test
+    ```
+
+## Writing Tests
+
+### Basic Test Structure
+
+Tests are functions named `test_*` that tesht discovers automatically:
 
 ``` bash
-cp tesht /usr/local/bin/
-# or
-ln -s "$PWD/tesht" ~/bin/
+test_BasicFunction() {
+    ## arrange
+    local input="test data"
+    local expected="expected result"
+    
+    ## act
+    local result
+    result=$(MyFunction "$input")
+    
+    ## assert
+    tesht.AssertGot "$result" "$expected"
+}
 ```
 
---------------------------------------------------------------------------------------------
+### Table-Driven Tests
+
+For multiple test cases sharing the same logic:
+
+``` bash
+test_CalculatorTable() {
+    local -A case1=([name]='addition' [a]=2 [b]=3 [op]='+' [want]=5)
+    local -A case2=([name]='subtraction' [a]=5 [b]=2 [op]='-' [want]=3)
+    local -A case3=([name]='multiplication' [a]=4 [b]=3 [op]='*' [want]=12)
+
+    subtest() {
+        local casename=$1
+        eval "$(tesht.Inherit $casename)"
+        
+        local got
+        got=$(Calculator "$a" "$op" "$b")
+        
+        tesht.AssertGot "$got" "$want"
+    }
+
+    tesht.Run ${!case@}
+}
+```
+
+### Testing Return Codes
+
+``` bash
+test_ErrorHandling() {
+    local got rc
+    got=$(SomeFunction "invalid input") && rc=$? || rc=$?
+    
+    tesht.Softly <<'END'
+        tesht.AssertRC $rc 1
+        tesht.AssertGot "$got" "Error: invalid input"
+END
+}
+```
+
+### Mocking Commands
+
+``` bash
+test_WithMockedCommand() {
+    # Mock external command
+    curl() {
+        echo "mocked response"
+        return 0
+    }
+    
+    local result
+    result=$(FunctionThatUsesCurl)
+    
+    tesht.AssertGot "$result" "processed: mocked response"
+}
+```
+
+## API Reference
+
+### Core Functions
+
+- **`tesht.Run ${!case@}`** - Execute table-driven subtests
+- **`tesht.Inherit $casename`** - Load associative array into local variables
+- **`tesht.AssertGot actual expected`** - Compare strings with diff on failure
+- **`tesht.AssertRC actual expected`** - Compare return codes
+- **`tesht.Softly`** - Run multiple assertions, continue on failure
+- **`tesht.Log message...`** - Print message from test
+
+### Utilities
+
+- **`tesht.MktempDir`** - Create temporary directory (auto-cleanup)
+- **`tesht.StartHttpServer [port]`** - Start HTTP server for testing
+- **`tesht.Diff expected actual`** - Show unified diff
 
 ## Usage
 
 ``` bash
-tesht [test_function]
+tesht [options] [test_function]
 ```
 
-- No arguments: runs all `test_*` functions in all `*_test.bash` files
-- With a function name: runs only the named test and its subtests
+- **No arguments**: Runs all `test_*` functions in all `*_test.bash` files
+- **With function name**: Runs only the specified test and its subtests
+- **`-x` flag**: Enable trace output for debugging test discovery and execution
 
---------------------------------------------------------------------------------------------
+## Example Output
 
-## Writing Testable Code
+    === RUN         test_Calculator/addition
+    --- PASS    2ms test_Calculator/addition
+    === RUN         test_Calculator/subtraction  
+    --- PASS    1ms test_Calculator/subtraction
+    === RUN         test_Calculator/division by zero
 
-To make code testable:
+    got does not match want:
+    < Error: division by zero
+    ---
+    > Expected error message
 
-- Organize logic into functions
-- Prevent execution on load with:
+    use this line to update want to match:
+        want='Error: division by zero'
+
+    --- FAIL    3ms test_Calculator/division by zero
+    FAIL        6ms
+    1/3
+
+## Best Practices
+
+1.  **Test file naming**: Use `*_test.bash` suffix matching the script name
+2.  **Test function naming**: Prefix with `test_` for auto-discovery
+3.  **Case naming**: Use descriptive names that explain what’s being tested
+4.  **Arrange-Act-Assert**: Structure tests with clear sections
+5.  **Edge cases**: Test boundary conditions and error scenarios
+6.  **Isolation**: Don’t rely on test execution order
+7.  **Cleanup**: Use temp directories and trap for resource cleanup
+
+## Real-World Example
 
 ``` bash
-return 2>/dev/null
-```
-
-This allows sourcing the script in tests without running it.
-
---------------------------------------------------------------------------------------------
-
-## Table-Driven Tests
-
-Table-driven tests allow multiple cases to share logic:
-
-``` bash
-test_GreetTable() {
-  local cases=(
-    ['Hello']="SayHello Alice => Hello, Alice!"
-    ['Hi']="SayHi Bob => Hi, Bob!"
-  )
-
-  for name in "${!cases[@]}"; do
-    tesht.Run "$name" "${cases[$name]}" runCase
-  done
-}
-
-runCase() {
-  tesht.Inherit "$@"
-  # use inherited vars: $1 = function call, $2 = expected
-  local got
-  got=$(eval "${1}")
-  tesht.AssertGot "$2" "$got"
+# test_HttpClient tests HTTP request functionality
+test_HttpClient() {
+    ## arrange
+    local dir
+    dir=$(tesht.MktempDir) || return 128
+    cd "$dir"
+    
+    echo "test content" > index.html
+    
+    local pid
+    pid=$(tesht.StartHttpServer 8080) || return 128
+    trap "kill $pid" EXIT
+    
+    ## act
+    local response rc
+    response=$(HttpGet "http://localhost:8080/index.html") && rc=$? || rc=$?
+    
+    ## assert
+    tesht.Softly <<'END'
+        tesht.AssertRC $rc 0
+        tesht.AssertGot "$response" "test content"
+END
 }
 ```
-
-Subtests will be shown with timing and results.
-
---------------------------------------------------------------------------------------------
-
-## Public Functions
-
-- `tesht.Run name args... func` — Run a subtest with name and arguments
-- `tesht.Inherit args...` — Load named values into local variables
-- `tesht.AssertGot expected actual` — Compare output
-- `tesht.AssertRC expected actual` — Compare return codes
-- `tesht.Diff expected actual` — Show unified diff on mismatch
-- `tesht.Log message...` — Print a message from a test
-- `tesht.MktempDir` — Create and track a temporary directory
-- `tesht.StartHttpServer dir [port]` — Serve a directory over HTTP for tests
-
---------------------------------------------------------------------------------------------
 
 ## License
 
 MIT License
-
-
----
-
-
-- Overview
-  - framework for testing Bash functions in scripts
-  - follows patterns from Go testing
-  - test files are named based on the file they test
-  - tests are functions with special names
-  - 
-- Features
-  - Auto-discovery of `_test.bash` files & `test_` functions
-  - Output suppression & test isolation (subshells)
-  - Per-test & suite-wide timing
-  - Table-driven testing via `tesht.Run`
-  - Built-in helpers
-    - HTTP server management (`tesht.StartHttpServer`)
-    - Temp directory creation (`tesht.MktempDir`)
-    - Assertions (`tesht.AssertGot`, `tesht.AssertRC`)
-    - Diff output formatting (`tesht.Diff`)
-    - Logging (`tesht.Log`)
-- Installation
-- Usage
-  - `tesht [test_function]`
-    - No arguments: runs all `test_*` in `*_test.bash`
-    - With function name: runs only that function & subtests
-- Example
-   - Uses `tesht.AssertGot`
-   - Output: PASS/FAIL with timing
-- Writing Testable Code
-  - Organize code into functions
-  - Structure script for function loading without execution
-    - Use `return 2>/dev/null` after function definitions
-- Table-Driven Tests
-  - Reuse test logic across cases
-  - Example: `greet_test.bash`
-    - Define cases as associative arrays
-    - Use `tesht.Inherit` and `tesht.Run`
-    - Output: subtest results with timing
-- Public Functions
-  - tesht.Run: run table-driven tests
-  - tesht.Inherit: convert array keys/values to locals
-  - tesht.AssertGot: compare actual/expected output
-  - tesht.AssertRC: check return code
-  - tesht.Diff: show unified diff
-  - tesht.Log: output message
-  - tesht.MktempDir: create temp dir
-  - tesht.StartHttpServer: start HTTP server
-- License
-  - MIT License
