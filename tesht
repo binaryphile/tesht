@@ -20,6 +20,34 @@
 IFS=$'\n'
 NL=$'\n'
 
+Prog=$(basename "$0")   # match what the user called
+
+read -rd '' Usage_ <<END
+Usage:
+
+  $Prog [OPTIONS] [--] [TESTNAME...]
+
+  Options:
+
+    -f FILE1,FILE2,...  constrain execution to specific test files
+    -h | --help         show this message and exit
+    -x | --trace        enable debug tracing
+    --                  stop option processing
+
+  Arguments:
+
+    TESTNAME...         run only the specified test functions and their subtests
+                        (if none specified, runs all test functions)
+
+  Examples:
+
+    $Prog                           # run all tests in all *_test.bash files
+    $Prog test_MyFunction           # run specific test
+    $Prog test_Func1 test_Func2     # run multiple specific tests
+    $Prog -f myScript_test.bash     # run tests from specific file only
+    $Prog -f file1.bash,file2.bash test_MyFunc  # constrain files and tests
+END
+
 GreenT=$'\033[38;5;82m'
 RedT=$'\033[38;5;196m'
 YellowT=$'\033[38;5;220m'
@@ -346,7 +374,8 @@ tesht.UnixMilli() {
 FilenamesT=()
 while [[ ${1:-} == -? ]]; do
   case $1 in
-    -x) set -x; shift;;
+    -h|--help) echo "$Usage_"; exit;;
+    -x|--trace) set -x; shift;;
     -f) shift; FilenamesT=( ${1//,/$NL} ); shift;;
     --) shift; break;;
   esac
