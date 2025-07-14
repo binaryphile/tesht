@@ -81,6 +81,8 @@ discovery and clear failure reporting.
     ``` bash
     tesht                    # run all tests
     tesht test_MyFunction    # run specific test
+    tesht -f myScript_test.bash  # run tests from specific file
+    tesht test_Func1 test_Func2  # run multiple specific tests
     ```
 
 ## Writing Tests
@@ -179,11 +181,12 @@ test_WithMockedCommand() {
 ## Usage
 
 ``` bash
-tesht [options] [test_function]
+tesht [-x] [-f file1,file2,...] [test_name...]
 ```
 
 - **No arguments**: Runs all `test_*` functions in all `*_test.bash` files
-- **With function name**: Runs only the specified test and its subtests
+- **With test names**: Runs only the specified tests and their subtests
+- **`-f` flag**: Constrain execution to specific test files (comma-separated)
 - **`-x` flag**: Enable trace output for debugging test discovery and execution
 
 ## Example Output

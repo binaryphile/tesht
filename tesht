@@ -18,6 +18,7 @@
 # "local -n ARRAY=$1".
 
 IFS=$'\n'
+NL=$'\n'
 
 GreenT=$'\033[38;5;82m'
 RedT=$'\033[38;5;196m'
@@ -73,6 +74,7 @@ END
   return 1
 }
 
+# tesht.AssertRC compares return codes and reports if they don't match.
 tesht.AssertRC() {
   local rc=$1 wantrc=$2
 
@@ -81,6 +83,7 @@ tesht.AssertRC() {
   return 1
 }
 
+# tesht.declareVar returns a declaration for a variable, handling arrays if the name is plural.
 tesht.declareVar() {
   local name=$1 value=$2
   [[ $name == *s || $name == *s_ && $value == '('*')' ]] &&
@@ -88,6 +91,7 @@ tesht.declareVar() {
     echo "declare $name=${value@Q}"
 }
 
+# tesht.Defer schedules a command to run on EXIT, preserving any existing EXIT trap.
 tesht.Defer() {
   local command=$1
   local NL=$'\n' # newline works with backgrounding (&) and legal semicolons, semicolon doesn't
@@ -101,6 +105,7 @@ tesht.Diff() {
   diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
 }
 
+# tesht.existingDeferlist returns the current EXIT trap command without the trap wrapper.
 tesht.existingDeferlist() {
   local deferlist_=$(trap -p EXIT)
   deferlist_=${deferlist_#trap -- \'}
@@ -337,22 +342,29 @@ tesht.UnixMilli() {
   echo "$whole${fraction:0:3}"
 }
 
-# flag to enable tracing
-[[ $1 == -x ]] && { shift; set -x; }
+# Parse command-line options
+FilenamesT=()
+while [[ ${1:-} == -? ]]; do
+  case $1 in
+    -x) set -x; shift;;
+    -f) shift; FilenamesT=( ${1//,/$NL} ); shift;;
+    --) shift; break;;
+  esac
+done
 
-TestnamelistT=${1//,/$IFS}
-FilenamelistT=${2//,/$IFS}
+# Remaining arguments are test names
+TestnamesT=( "$@" )
 
-shopt -s nullglob
-FilenamesT=( *_test.bash )
-shopt -u nullglob
-
-[[ $FilenamelistT == '' ]] && FilenamelistT=${FilenamesT[*]}
-[[ $FilenamelistT == '' ]] && { echo "no test files found"; exit; }
-unset -v FilenamesT
+# If no files specified, use all test files
+if (( ${#FilenamesT[@]} == 0 )); then
+  shopt -s nullglob
+  FilenamesT=( *_test.bash )
+  shopt -u nullglob
+  (( ${#FilenamesT[@]} == 0 )) && { echo "no test files found"; exit; }
+fi
 
 # strict mode
 return 2>/dev/null
 set -euf
 
-tesht.Main "$TestnamelistT" "$FilenamelistT"
+tesht.Main "$(tesht.ListOf "${TestnamesT[@]}")" "$(tesht.ListOf "${FilenamesT[@]}")"
