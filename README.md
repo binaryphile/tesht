@@ -1,8 +1,15 @@
 # tesht — Table-Driven Testing for Bash
 
+![Version](assets/version.svg)
+![Tests](assets/tests.svg)
+![Coverage](assets/coverage.svg)
+![Lines](assets/lines.svg)
+
 A lightweight testing framework for Bash scripts inspired by Go’s testing package. Write
 clean, maintainable table-driven tests for your shell functions with automatic test
 discovery and clear failure reporting.
+
+![tesht in action](assets/tesht.gif)
 
 ## Why Test Bash?
 
