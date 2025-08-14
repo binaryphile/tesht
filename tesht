@@ -85,7 +85,7 @@ tesht.Main() {
 
 # tesht.AssertGot returns whether the items match and, if not, outputs a message.
 tesht.AssertGot() {
-  local got=$1 want=$2
+  local got=$1 want=${2:-}
 
   [[ $got == "$want" ]] && return
   cat <<END
