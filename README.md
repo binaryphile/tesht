@@ -144,6 +144,33 @@ END
 }
 ```
 
+### Smoke Testing CLIs
+
+For ad-hoc CLI smoke checks outside test functions — e.g. verifying
+a binary's validation paths after a build — naive shell chains
+propagate the *last* command's exit code as the script's. A script
+ending with an intentional-failure probe (a command that's *supposed*
+to exit nonzero) reports an overall nonzero exit, even though the
+probe behaved exactly as designed. `tesht.Smoke` inverts that: it
+runs a command and succeeds iff the command's exit code matches the
+expected value.
+
+``` bash
+# After building, verify the CLI's validation paths.
+tesht.Smoke 1 mytool --required        # missing required arg → expect rc=1
+tesht.Smoke 1 mytool --bad-flag        # unknown flag → expect rc=1
+tesht.Smoke 0 mytool --version         # success path → expect rc=0
+echo 'all smoke checks passed'
+```
+
+Each call returns 0 if the command's actual rc matches the expected;
+nonzero otherwise (with the actual rc and captured output reported on
+stderr via `tesht.Log`). The script's overall exit code now reflects
+*unexpected* failures only.
+
+The optional `--` separator can disambiguate when the command starts
+with a flag-like token: `tesht.Smoke 1 -- mytool --help`.
+
 ### Mocking Commands
 
 ``` bash
@@ -169,6 +196,7 @@ test_WithMockedCommand() {
 - **`tesht.Inherit $casename`** - Load associative array into local variables
 - **`tesht.AssertGot actual expected`** - Compare strings with diff on failure
 - **`tesht.AssertRC actual expected`** - Compare return codes
+- **`tesht.Smoke expected_rc [--] cmd [args...]`** - Run a CLI smoke check; succeed iff actual rc matches expected
 - **`tesht.Softly`** - Run multiple assertions, continue on failure
 - **`tesht.Log message...`** - Print message from test
 
@@ -208,6 +236,45 @@ tesht [-x] [-f file1,file2,...] [test_name...]
     --- FAIL    3ms test_Calculator/division by zero
     FAIL        6ms
     1/3
+
+## Test Isolation
+
+Each test function runs inside a subshell (`( ... )`), forked from the
+runner. This gives strong process-level isolation between tests.
+
+**Cannot leak between tests:**
+
+- Variable changes (`local`, `export`, plain assignments)
+- Working directory (`cd`)
+- Shell options (`set -e`, `set -o noglob`, ...)
+- Function redefinitions, sourced files
+- `EXIT` / `ERR` / signal traps
+
+**Cannot affect the parent test runner:**
+
+- `exec` replaces only the subshell's process; the runner is the parent
+  and is unaffected
+- `exit` terminates only the subshell; the runner records the rc and
+  continues
+- Resource limits (`ulimit`) apply only inside the subshell
+
+**Can leak — use the cleanup helpers:**
+
+- Filesystem changes outside a temp dir → use `tesht.MktempDir`
+- Background child processes → register cleanup with `tesht.Defer` (or a
+  `trap "kill $pid" EXIT` for single-test scripts)
+- External state (network listeners, shared databases, system files)
+
+**Genuinely shared:**
+
+- The terminal `stdout`/`stderr` (the runner serializes test output)
+- Resources reachable through `kill $PPID` or `/proc/$PPID/...` —
+  isolation only protects against ordinary test misbehavior, not
+  deliberate sabotage
+
+The practical guarantee: write each test assuming a clean process state
+(it gets one), but treat the filesystem and external resources as shared
+and clean them up explicitly.
 
 ## Best Practices
 

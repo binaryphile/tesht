@@ -136,6 +136,61 @@ test_AssertRC() {
   tesht.Run ${!case@}
 }
 
+# test_Smoke tests that Smoke asserts a command's exit code matches the expected value.
+test_Smoke() {
+  local -A case1=(
+    [name]='return 0 and no output when expected rc matches actual'
+
+    [command]='tesht.Smoke 0 true'
+    [want]=''
+    [wantrc]=0
+  )
+
+  local -A case2=(
+    [name]='return 0 when an intentionally-failing command matches expected nonzero rc'
+
+    [command]='tesht.Smoke 1 false'
+    [want]=''
+    [wantrc]=0
+  )
+
+  local -A case3=(
+    [name]='return 1 and report the mismatch when actual rc differs from expected'
+
+    [command]='tesht.Smoke 0 false'
+    [want]=$'\n\nFAIL: expected rc=0, got rc=1 from: false\n\n\n  output: '
+    [wantrc]=1
+  )
+
+  local -A case4=(
+    [name]='accept optional -- separator before the command'
+
+    [command]='tesht.Smoke 0 -- true'
+    [want]=''
+    [wantrc]=0
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    UnixMilliFuncT=mockUnixMilli
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got rc # can't combine with below when getting rc
+    got=$(eval "$command") && rc=$? || rc=$?
+
+    ## assert
+    tesht.Softly <<'    END'
+      tesht.AssertRC $rc $wantrc
+      tesht.AssertGot "$got" "$want"
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
 # test_ListOf tests that ListOf joins arguments with newlines.
 test_ListOf() {
   local -A case1=(

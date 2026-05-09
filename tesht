@@ -261,6 +261,27 @@ tesht.runSubtest() {
   return $rc
 }
 
+# tesht.Smoke runs a command and asserts its exit code matches the expected value.
+# Use for ad-hoc CLI smoke checks outside test functions, where naive shell
+# chains propagate the last command's exit code -- producing a script-level
+# nonzero even when an intentional-failure path was being verified. tesht.Smoke
+# inverts that: nonzero from the command is success when expected, and the
+# helper returns 0; mismatches return 1 with the actual rc and captured output
+# on stderr.
+#
+# Usage: tesht.Smoke EXPECTED_RC -- CMD [ARGS...]
+#        tesht.Smoke EXPECTED_RC CMD [ARGS...]   # -- optional
+tesht.Smoke() {
+  local want=$1; shift
+  [[ ${1:-} == -- ]] && shift
+  local got_ rc=0
+  got_=$("$@" 2>&1) || rc=$?
+  (( rc == want )) && return 0
+  tesht.Log "FAIL: expected rc=$want, got rc=$rc from: $*"
+  tesht.Log "  output: $got_"
+  return 1
+}
+
 # tesht.Softly runs assertions provided on stdin and reports whether any failed.
 tesht.Softly() {
   local FAILED=0 LINE  # don't mask higher namespaces
