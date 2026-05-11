@@ -73,6 +73,8 @@ tesht.Main() {
     tesht.testFile $filename "${testnames[@]}" || failed=1
   done
 
+  (( TestCountT > 0 )) || failed=2
+
   local endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
@@ -81,6 +83,7 @@ tesht.Main() {
   printf $columns $result $duration
 
   echo $PassCountT/$TestCountT
+  return $failed
 }
 
 # tesht.AssertGot returns whether the items match and, if not, outputs a message.
@@ -404,6 +407,14 @@ done
 
 # Remaining arguments are test names
 TestnamesT=( "$@" )
+
+# Reject file-looking positional args — common mistake: tesht file_test.bash vs tesht -f file_test.bash
+for arg in "${TestnamesT[@]+"${TestnamesT[@]}"}"; do
+  if [[ -f $arg || $arg == *_test.bash ]]; then
+    echo "error: '$arg' looks like a test file; did you mean: $Prog -f $arg?" >&2
+    exit 2
+  fi
+done
 
 # If no files specified, use all test files
 if (( ${#FilenamesT[@]} == 0 )); then

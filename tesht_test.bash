@@ -29,6 +29,15 @@ $FailT$Tab${Tab}0ms
 1/2"
   )
 
+  local -A case3=(
+    [name]='report FAIL and exit 2 when no tests match filter'
+
+    [command]='tesht.Main "test_nonexistent" dummy_test.bash'
+    [want]="${FailT}${Tab}${Tab}0ms
+0/0"
+    [wantrc]=2
+  )
+
   subtest() {
     local casename=$1
 
@@ -49,10 +58,14 @@ $FailT$Tab${Tab}0ms
       >dummy_test.bash
 
     ## act
-    local got=$(eval "$command")
+    local got rc
+    got=$(eval "$command") && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertGot "$got" "$want"
+    tesht.Softly <<'    END'
+      tesht.AssertGot "$got" "$want"
+      [[ -z ${wantrc:-} ]] || tesht.AssertRC $rc $wantrc
+    END
   }
 
   tesht.Run ${!case@}
