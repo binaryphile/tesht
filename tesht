@@ -171,7 +171,7 @@ tesht.ListOf() {
 # Valid function names begin the line with "test_",
 # followed by identifier characters and "()".
 tesht.listTestnames() {
-  awk '/^test_[-_a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
+  awk '/^test_[-_.a-zA-Z0-9]+()/ { sub(/\(.*/, "", $1); print $1 }' $1
 }
 
 tesht.Log() {
