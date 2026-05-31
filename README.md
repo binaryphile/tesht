@@ -79,11 +79,14 @@ discovery and clear failure reporting.
 4.  **Run tests**:
 
     ``` bash
-    tesht                    # run all tests
-    tesht test_MyFunction    # run specific test
-    tesht -f myScript_test.bash  # run tests from specific file
-    tesht test_Func1 test_Func2  # run multiple specific tests
+    tesht                              # run all tests in *_test.bash files
+    tesht myScript_test.bash           # run tests from a specific file
+    tesht foo_test.bash bar_test.bash  # multiple files
+    tesht -run TestMyFunction          # filter test names by regex
+    tesht myScript_test.bash -run TestFoo  # file + name filter
     ```
+
+    Positional args are test files; `-run REGEXP` filters by name (bash native regex). Matches Go's `go test [-run regexp] [files]` shape.
 
 ## Writing Tests
 

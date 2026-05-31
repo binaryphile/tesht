@@ -8,12 +8,16 @@ the script under test.
 ## Invocation
 
 ```bash
-tesht                       # run all test_* in *_test.bash files in cwd
-tesht test_MyFunction       # run a specific test (or pattern)
-tesht -f my_test.bash       # constrain to a specific file
-tesht -f my_test.bash test_MyFunction   # both
-tesht -x                    # trace mode for debugging
+tesht                              # run all test_* in *_test.bash files in cwd
+tesht my_test.bash                 # run tests in one file
+tesht foo_test.bash bar_test.bash  # multiple files
+tesht -run TestMyFunction          # filter test names by regex (any file)
+tesht my_test.bash -run TestFoo    # file + name filter
+tesht -run=TestFoo my_test.bash    # equals-syntax variant
+tesht -x                           # trace mode for debugging
 ```
+
+Positional args are test files; `-run REGEXP` filters test names via bash native regex (`=~`). Empty regex matches every test. The `-run` flag accepts both `-run REGEXP` (space-separated) and `-run=REGEXP` (equals-syntax) forms. Matches Go's `go test [-run regexp] [files]` shape.
 
 ## Test discovery
 
