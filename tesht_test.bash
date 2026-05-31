@@ -3,6 +3,9 @@ NL=$'\n'
 CR=$'\r'
 Tab=$'\t'
 
+# Path to the tesht script under test. Captured at source time before any test cd's away.
+TESHT_PATHT=$(realpath -- "${BASH_SOURCE%/*}/tesht")
+
 # deterministic mock for time
 mockUnixMilli() { return 0; }
 
@@ -20,9 +23,9 @@ $FailT$Tab${Tab}0ms
   )
 
   local -A case2=(
-    [name]='run two requested tests and skip a third'
+    [name]='-run regex alternation runs two tests and skips a third'
 
-    [command]='tesht.Main "test_success${NL}test_failure" dummy_test.bash'
+    [command]='tesht.Main "test_success|test_failure" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms$Tab${YellowT}test_failure$ResetT
 $FailT$Tab${Tab}0ms
@@ -36,6 +39,24 @@ $FailT$Tab${Tab}0ms
     [want]="${FailT}${Tab}${Tab}0ms
 0/0"
     [wantrc]=2
+  )
+
+  local -A case4=(
+    [name]='-run anchored regex runs only exact match'
+
+    [command]='tesht.Main "^test_success\$" dummy_test.bash'
+    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+$PassT$Tab${Tab}0ms
+1/1"
+  )
+
+  local -A case5=(
+    [name]='-run substring (unanchored) matches multiple by partial name'
+
+    [command]='tesht.Main "succ" dummy_test.bash'
+    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+$PassT$Tab${Tab}0ms
+1/1"
   )
 
   subtest() {
@@ -336,6 +357,79 @@ test_StartHttpServer() {
     tesht.AssertRC $rc 0
     tesht.AssertGot "$got" "test content"
   END
+}
+
+# test_cli_positional_file verifies a positional file arg is recognized + executed end-to-end.
+test_cli_positional_file() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  echoLines "test_one() { :; }" >dummy_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT dummy_test.bash 2>&1) && rc=$? || rc=$?
+
+  [[ $got == *test_one* ]] || { tesht.Log "expected 'test_one' in output, got: $got"; return 1; }
+  [[ $got == *PASS* ]] || { tesht.Log "expected 'PASS' marker in output, got: $got"; return 1; }
+  tesht.AssertRC $rc 0
+}
+
+# test_cli_multiple_positional_files verifies that two positional files are both executed.
+test_cli_multiple_positional_files() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  echoLines "test_foo() { :; }" >foo_test.bash
+  echoLines "test_bar() { :; }" >bar_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT foo_test.bash bar_test.bash 2>&1) && rc=$? || rc=$?
+
+  [[ $got == *test_foo* ]] || { tesht.Log "expected 'test_foo' in output, got: $got"; return 1; }
+  [[ $got == *test_bar* ]] || { tesht.Log "expected 'test_bar' in output, got: $got"; return 1; }
+  tesht.AssertRC $rc 0
+}
+
+# test_cli_run_flag_subprocess verifies -run REGEXP and -run=REGEXP forms filter test names.
+test_cli_run_flag_subprocess() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  echoLines "test_one() { :; }" "test_two() { :; }" >dummy_test.bash
+
+  # -run REGEXP (space-separated form)
+  local got
+  got=$($TESHT_PATHT -run test_one dummy_test.bash 2>&1)
+  [[ $got == *test_one* ]] || { tesht.Log "space-form: missing test_one in: $got"; return 1; }
+  [[ $got != *test_two* ]] || { tesht.Log "space-form: test_two should be filtered out: $got"; return 1; }
+
+  # -run=REGEXP (equals-syntax form)
+  got=$($TESHT_PATHT -run=test_two dummy_test.bash 2>&1)
+  [[ $got == *test_two* ]] || { tesht.Log "equals-form: missing test_two in: $got"; return 1; }
+  [[ $got != *test_one* ]] || { tesht.Log "equals-form: test_one should be filtered out: $got"; return 1; }
+
+  # Flag-after-positional (interleaved order): regression guard for impl /i pass
+  # finding that the original options-then-positional parser loop broke on the
+  # docs-promised `tesht my_test.bash -run TestFoo` shape.
+  got=$($TESHT_PATHT dummy_test.bash -run test_one 2>&1)
+  [[ $got == *test_one* ]] || { tesht.Log "flag-after-positional: missing test_one in: $got"; return 1; }
+  [[ $got != *test_two* ]] || { tesht.Log "flag-after-positional: test_two should be filtered out: $got"; return 1; }
+}
+
+# test_cli_non_file_positional_errors verifies the inverted guard catches test-name-style positionals.
+test_cli_non_file_positional_errors() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local got rc=0
+  got=$($TESHT_PATHT test_MyFunc 2>&1) || rc=$?
+
+  tesht.AssertRC $rc 2
+  [[ $got == *"does not look like a test file"* ]] \
+    || { tesht.Log "missing 'does not look like a test file' in stderr: $got"; return 1; }
+  [[ $got == *"did you mean: tesht -run test_MyFunc"* ]] \
+    || { tesht.Log "missing 'did you mean: tesht -run' in stderr: $got"; return 1; }
 }
 
 ## helpers

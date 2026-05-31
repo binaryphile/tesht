@@ -25,27 +25,32 @@ Prog=$(basename "$0")   # match what the user called
 read -rd '' Usage_ <<END
 Usage:
 
-  $Prog [OPTIONS] [--] [TESTNAME...]
+  $Prog [OPTIONS] [--] [FILE...]
 
   Options:
 
-    -f FILE1,FILE2,...  constrain execution to specific test files
+    -run REGEXP         filter test names by bash native regex (=~)
+                        (equals-syntax variant: -run=REGEXP)
     -h | --help         show this message and exit
     -x | --trace        enable debug tracing
     --                  stop option processing
 
   Arguments:
 
-    TESTNAME...         run only the specified test functions and their subtests
-                        (if none specified, runs all test functions)
+    FILE...             run tests from the specified file(s)
+                        (if none given, runs all *_test.bash files in cwd)
 
   Examples:
 
-    $Prog                           # run all tests in all *_test.bash files
-    $Prog test_MyFunction           # run specific test
-    $Prog test_Func1 test_Func2     # run multiple specific tests
-    $Prog -f myScript_test.bash     # run tests from specific file only
-    $Prog -f file1.bash,file2.bash test_MyFunc  # constrain files and tests
+    $Prog                              # run all tests in all *_test.bash files
+    $Prog my_test.bash                 # run tests in one file
+    $Prog foo_test.bash bar_test.bash  # multiple files
+    $Prog -run TestMyFunction          # filter by name regex (any file)
+    $Prog my_test.bash -run TestFoo    # file + name filter
+    $Prog -run=TestFoo my_test.bash    # equals-syntax variant
+
+  Matches Go's go-test convention: positional args are files; -run
+  REGEXP filters test names. Empty regex matches all tests.
 END
 
 GreenT=$'\033[38;5;82m'
@@ -63,14 +68,17 @@ UnixMilliFuncT=tesht.UnixMilli
 
 # tesht.Main runs any test functions in the files given as arguments.
 # It outputs success or failure.
+#
+# Args: $1 = test-name regex filter (empty = match all);
+#       $2 = newline-separated list of test files (typically built via tesht.ListOf).
 tesht.Main() {
-  local testnames=( ${1:-} ) filenames=( ${2:-} )
+  local runRegexp=${1:-} filenames=( ${2:-} )
 
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
   local startTime=$($UnixMilliFuncT)
 
   for filename in "${filenames[@]}"; do
-    tesht.testFile $filename "${testnames[@]}" || failed=1
+    tesht.testFile $filename "$runRegexp" || failed=1
   done
 
   (( TestCountT > 0 )) || failed=2
@@ -142,12 +150,6 @@ tesht.existingDeferlist() {
   deferlist_=${deferlist_#trap -- \'}
   deferlist_=${deferlist_%\' EXIT}
   echo "$deferlist_"
-}
-
-# tesht.in returns whether item is in array.
-tesht.in() {
-  local -n ARRAY=$1
-  [[ "$IFS${ARRAY[*]}$IFS" == *"$IFS$2$IFS"* ]]
 }
 
 # tesht.Inherit returns an eval'able set of variable assignments from a map.
@@ -366,21 +368,18 @@ tesht.test() {
   esac
 }
 
-# tesht.testFile runs any test functions in filename, or just functions listed in requests.
+# tesht.testFile runs any test functions in filename, or just functions whose
+# names match runRegexp (bash =~ regex; empty = match all).
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
 tesht.testFile() {
-  local filename=$1; shift
-  local requestedTests=( "$@" )
+  local filename=$1 runRegexp=${2:-}
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
   local testSource_=$(<$filename)
   for testname in ${testsInFile[@]}; do
-    case ${#requestedTests[@]} in
-      0 ) tesht.test "$testSource_" $testname;;
-      * ) tesht.in requestedTests $testname && tesht.test "$testSource_" $testname
-    esac
+    [[ -z $runRegexp || $testname =~ $runRegexp ]] && tesht.test "$testSource_" $testname
   done
 
   return $failed
@@ -394,29 +393,41 @@ tesht.UnixMilli() {
   echo "$whole${fraction:0:3}"
 }
 
-# Parse command-line options
+# Parse command-line options + positionals. Flags can interleave with positional
+# args; the loop classifies each arg per turn. `--` terminates flag parsing
+# (everything after is positional, including args that start with `-`).
+RunRegexpT=""
 FilenamesT=()
-while [[ ${1:-} == -? ]]; do
+while (( $# )); do
   case $1 in
-    -h|--help) echo "$Usage_"; exit;;
+    -h|--help)  echo "$Usage_"; exit;;
     -x|--trace) set -x; shift;;
-    -f) shift; FilenamesT=( ${1//,/$NL} ); shift;;
-    --) shift; break;;
+    -run)       shift; RunRegexpT=${1:?-run requires a regexp}; shift;;
+    -run=*)     RunRegexpT=${1#-run=}; shift;;
+    --)         shift; FilenamesT+=( "$@" ); break;;
+    -*)         echo "error: unknown option: $1" >&2; exit 2;;
+    *)          FilenamesT+=( "$1" ); shift;;
   esac
 done
 
-# Remaining arguments are test names
-TestnamesT=( "$@" )
-
-# Reject file-looking positional args — common mistake: tesht file_test.bash vs tesht -f file_test.bash
-for arg in "${TestnamesT[@]+"${TestnamesT[@]}"}"; do
-  if [[ -f $arg || $arg == *_test.bash ]]; then
-    echo "error: '$arg' looks like a test file; did you mean: $Prog -f $arg?" >&2
+# Inverted file-look guard — 4-branch table:
+#   ends in _test.bash AND on disk -> accept (branch 1)
+#   ends in _test.bash AND not on disk -> file-not-found error (branch 2)
+#   doesn't end in _test.bash AND not on disk -> did-you-mean -run error (branch 3)
+#   doesn't end in _test.bash AND on disk -> accept (branch 4; operator named a real file)
+for arg in "${FilenamesT[@]+"${FilenamesT[@]}"}"; do
+  if [[ -f $arg ]]; then
+    : # branches 1 & 4 — accept
+  elif [[ $arg == *_test.bash ]]; then
+    echo "error: file not found: $arg" >&2
+    exit 2
+  else
+    echo "error: '$arg' does not look like a test file (no _test.bash suffix); did you mean: $Prog -run $arg?" >&2
     exit 2
   fi
 done
 
-# If no files specified, use all test files
+# If no files specified, use all test files in cwd.
 if (( ${#FilenamesT[@]} == 0 )); then
   shopt -s nullglob
   FilenamesT=( *_test.bash )
@@ -428,4 +439,4 @@ fi
 return 2>/dev/null
 set -euf
 
-tesht.Main "$(tesht.ListOf "${TestnamesT[@]}")" "$(tesht.ListOf "${FilenamesT[@]}")"
+tesht.Main "$RunRegexpT" "$(tesht.ListOf "${FilenamesT[@]}")"
