@@ -11,13 +11,16 @@ the script under test.
 tesht                              # run all test_* in *_test.bash files in cwd
 tesht my_test.bash                 # run tests in one file
 tesht foo_test.bash bar_test.bash  # multiple files
+tesht scripts/                     # all *_test.bash in scripts/ (shallow)
 tesht -run TestMyFunction          # filter test names by regex (any file)
 tesht my_test.bash -run TestFoo    # file + name filter
 tesht -run=TestFoo my_test.bash    # equals-syntax variant
 tesht -x                           # trace mode for debugging
 ```
 
-Positional args are test files; `-run REGEXP` filters test names via bash native regex (`=~`). Empty regex matches every test. The `-run` flag accepts both `-run REGEXP` (space-separated) and `-run=REGEXP` (equals-syntax) forms. Matches Go's `go test [-run regexp] [files]` shape.
+Positional args are test files or directories; `-run REGEXP` filters test names via bash native regex (`=~`). Empty regex matches every test. The `-run` flag accepts both `-run REGEXP` (space-separated) and `-run=REGEXP` (equals-syntax) forms. Matches Go's `go test [-run regexp] [files]` shape.
+
+Directory args expand to `*_test.bash` files at one level deep (shallow; non-recursive). An empty directory errors. For nested test trees, pass an explicit glob (e.g. `tesht path/**/*_test.bash` with `shopt -s globstar`); built-in recursive discovery is deferred until a real use case surfaces.
 
 ## Test discovery
 

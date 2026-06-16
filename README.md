@@ -82,11 +82,12 @@ discovery and clear failure reporting.
     tesht                              # run all tests in *_test.bash files
     tesht myScript_test.bash           # run tests from a specific file
     tesht foo_test.bash bar_test.bash  # multiple files
+    tesht scripts/                     # all *_test.bash in scripts/ (shallow)
     tesht -run TestMyFunction          # filter test names by regex
     tesht myScript_test.bash -run TestFoo  # file + name filter
     ```
 
-    Positional args are test files; `-run REGEXP` filters by name (bash native regex). Matches Go's `go test [-run regexp] [files]` shape.
+    Positional args are test files or directories; `-run REGEXP` filters by name (bash native regex). Directories expand to `*_test.bash` one level deep (shallow). Matches Go's `go test [-run regexp] [files]` shape.
 
 ## Writing Tests
 
