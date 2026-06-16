@@ -37,7 +37,8 @@ Usage:
 
   Arguments:
 
-    FILE...             run tests from the specified file(s)
+    FILE...             run tests from the specified file(s) or directories
+                        (directories expand to *_test.bash, one level deep)
                         (if none given, runs all *_test.bash files in cwd)
 
   Examples:
@@ -45,6 +46,7 @@ Usage:
     $Prog                              # run all tests in all *_test.bash files
     $Prog my_test.bash                 # run tests in one file
     $Prog foo_test.bash bar_test.bash  # multiple files
+    $Prog scripts/                     # all *_test.bash in scripts/ (shallow)
     $Prog -run TestMyFunction          # filter by name regex (any file)
     $Prog my_test.bash -run TestFoo    # file + name filter
     $Prog -run=TestFoo my_test.bash    # equals-syntax variant
@@ -411,21 +413,32 @@ while (( $# )); do
 done
 
 # Inverted file-look guard — 4-branch table:
-#   ends in _test.bash AND on disk -> accept (branch 1)
-#   ends in _test.bash AND not on disk -> file-not-found error (branch 2)
-#   doesn't end in _test.bash AND not on disk -> did-you-mean -run error (branch 3)
-#   doesn't end in _test.bash AND on disk -> accept (branch 4; operator named a real file)
+#   directory -> expand to shallow *_test.bash files (branch 1)
+#   on-disk file -> accept (branch 2; matches _test.bash or operator named a real file)
+#   ends in _test.bash AND not on disk -> file-not-found error (branch 3)
+#   anything else -> did-you-mean error (branch 4)
+ExpandedFilesT=()
 for arg in "${FilenamesT[@]+"${FilenamesT[@]}"}"; do
-  if [[ -f $arg ]]; then
-    : # branches 1 & 4 — accept
+  if [[ -d $arg ]]; then
+    shopt -s nullglob
+    dirFilesT=( "$arg"/*_test.bash )
+    shopt -u nullglob
+    (( ${#dirFilesT[@]} > 0 )) || {
+      echo "error: no *_test.bash files in directory: $arg" >&2
+      exit 2
+    }
+    ExpandedFilesT+=( "${dirFilesT[@]}" )
+  elif [[ -f $arg ]]; then
+    ExpandedFilesT+=( "$arg" )
   elif [[ $arg == *_test.bash ]]; then
     echo "error: file not found: $arg" >&2
     exit 2
   else
-    echo "error: '$arg' does not look like a test file (no _test.bash suffix); did you mean: $Prog -run $arg?" >&2
+    echo "error: '$arg' does not look like a test file or directory; did you mean: $Prog -run $arg, $Prog <dir>, or $Prog <dir>/*_test.bash?" >&2
     exit 2
   fi
 done
+FilenamesT=( "${ExpandedFilesT[@]+"${ExpandedFilesT[@]}"}" )
 
 # If no files specified, use all test files in cwd.
 if (( ${#FilenamesT[@]} == 0 )); then

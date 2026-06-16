@@ -432,6 +432,88 @@ test_cli_non_file_positional_errors() {
     || { tesht.Log "missing 'did you mean: tesht -run' in stderr: $got"; return 1; }
 }
 
+# test_cli_positional_directory verifies a directory arg expands to *_test.bash files (shallow).
+test_cli_positional_directory() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  mkdir -p sub
+  echoLines "test_a() { :; }" >sub/a_test.bash
+  echoLines "test_b() { :; }" >sub/b_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT sub/ 2>&1) && rc=$? || rc=$?
+
+  tesht.AssertRC $rc 0
+  [[ $got == *test_a* ]] || { tesht.Log "expected 'test_a' in output, got: $got"; return 1; }
+  [[ $got == *test_b* ]] || { tesht.Log "expected 'test_b' in output, got: $got"; return 1; }
+}
+
+# test_cli_positional_directory_shallow verifies discovery does NOT recurse.
+test_cli_positional_directory_shallow() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  mkdir -p sub/nested
+  echoLines "test_top() { :; }" >sub/top_test.bash
+  echoLines "test_deep() { :; }" >sub/nested/deep_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT sub/ 2>&1) && rc=$? || rc=$?
+
+  tesht.AssertRC $rc 0
+  [[ $got == *test_top* ]] || { tesht.Log "expected 'test_top' in output, got: $got"; return 1; }
+  [[ $got != *test_deep* ]] || { tesht.Log "test_deep should NOT have been discovered (no recursion), got: $got"; return 1; }
+}
+
+# test_cli_positional_directory_empty verifies an empty dir reports a clear error.
+test_cli_positional_directory_empty() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  mkdir -p empty
+
+  local got rc=0
+  got=$($TESHT_PATHT empty/ 2>&1) || rc=$?
+
+  tesht.AssertRC $rc 2
+  [[ $got == *"no *_test.bash files in directory: empty/"* ]] \
+    || { tesht.Log "missing expected empty-dir error in stderr: $got"; return 1; }
+}
+
+# test_cli_positional_directory_and_file verifies dir + explicit file both run.
+test_cli_positional_directory_and_file() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  mkdir -p sub
+  echoLines "test_in_dir() { :; }" >sub/x_test.bash
+  echoLines "test_explicit() { :; }" >other_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT sub/ other_test.bash 2>&1) && rc=$? || rc=$?
+
+  tesht.AssertRC $rc 0
+  [[ $got == *test_in_dir* ]] || { tesht.Log "expected 'test_in_dir' in output, got: $got"; return 1; }
+  [[ $got == *test_explicit* ]] || { tesht.Log "expected 'test_explicit' in output, got: $got"; return 1; }
+}
+
+# test_cli_positional_directory_with_run_filter verifies -run filters tests discovered from a dir.
+test_cli_positional_directory_with_run_filter() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  mkdir -p sub
+  echoLines "test_keep() { :; }" "test_skip() { :; }" >sub/x_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT -run test_keep sub/ 2>&1) && rc=$? || rc=$?
+
+  tesht.AssertRC $rc 0
+  [[ $got == *test_keep* ]] || { tesht.Log "expected 'test_keep' in output, got: $got"; return 1; }
+  [[ $got != *test_skip* ]] || { tesht.Log "test_skip should be filtered out, got: $got"; return 1; }
+}
+
 ## helpers
 
 echoLines() {
