@@ -217,24 +217,54 @@ tesht.MktempDir() {
 
   [[ -d $DIR ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
 
-  tesht.Defer "tesht.removeWithRetry $DIR"
+  tesht.Defer "tesht.Retry --attempts 5 --delay 0.2 --on-exhaust warn -- rm -rf -- $DIR"
 }
 
-# tesht.removeWithRetry rm -rf's a directory, retrying on ENOTEMPTY/EBUSY for up
-# to 5 attempts at 200ms intervals (1s total). After exhausting retries it logs
-# a warning and returns 0 so a child process still writing into a test's
-# tmpdir at EXIT-trap time does not flip a passing test to FAIL on the cleanup
-# seam (#37012; race exposed by agent-orchestration fakebin-golden speedup).
-# Test-body assertions are the source of truth; cleanup is best-effort.
-tesht.removeWithRetry() {
-  local dir=$1
-  local -i attempt
-  for attempt in 1 2 3 4 5; do
-    rm -rf -- "$dir" 2>/dev/null && return 0
-    sleep 0.2
+# tesht.Retry runs CMD up to N times, returning 0 on first success. It is a
+# composable middleware in the fluentfp/web Adapt(handler, opts...) style:
+# options are long-flag pairs consumed before the wrapped command, then the
+# command + its args follow (optionally separated by `--`).
+#
+# Options:
+#   --attempts N      number of attempts (default 5; must be a positive integer)
+#   --delay SEC       sleep between attempts (default 0.2; fractional seconds OK)
+#   --on-exhaust MODE behavior after attempts are exhausted (default fail):
+#                       fail   -> return 1
+#                       warn   -> log to stderr + return 0
+#                       silent -> return 0
+#
+# Designed for the cleanup-race case in tesht.MktempDir (#37012): a forked
+# child still writing into a tmpdir at EXIT-trap time races rm -rf and fails
+# with ENOTEMPTY. The MktempDir Defer uses --on-exhaust warn so the test's
+# assertion verdict survives a cleanup miss. Reusable for any retry-with-policy
+# composition without growing per-call wrappers.
+tesht.Retry() {
+  local -i attempts=5
+  local delay=0.2
+  local onExhaust=fail
+  while [[ ${1:-} == --* ]]; do
+    case $1 in
+      --attempts)   attempts=$2; shift 2;;
+      --delay)      delay=$2; shift 2;;
+      --on-exhaust) onExhaust=$2; shift 2;;
+      --)           shift; break;;
+      *)            echo "tesht.Retry: unknown option: $1" >&2; return 2;;
+    esac
   done
-  echo "warning: tesht.removeWithRetry: gave up on $dir after 5 attempts; child process may have leaked" >&2
-  return 0
+  (( $# > 0 )) || { echo 'tesht.Retry: missing command after options' >&2; return 2; }
+
+  local -i attempt
+  for (( attempt = 1; attempt <= attempts; attempt++ )); do
+    "$@" 2>/dev/null && return 0
+    sleep $delay
+  done
+
+  case $onExhaust in
+    fail)   return 1;;
+    warn)   echo "warning: tesht.Retry: $attempts attempts exhausted: $*" >&2; return 0;;
+    silent) return 0;;
+    *)      echo "tesht.Retry: unknown --on-exhaust: $onExhaust" >&2; return 2;;
+  esac
 }
 
 # tesht.portIsInUse detects whether port is already in use.

@@ -77,6 +77,8 @@ test_doThing() {
   named variable (out-param), registers a retrying `rm -rf` via `tesht.Defer`
   (see "Cleanup race tolerance" below)
 - `tesht.Defer "command"` -- stack a command on the EXIT trap (FIFO)
+- `tesht.Retry [options] [--] cmd [args...]` -- composable retry middleware
+  (see "Retry middleware" below)
 - `tesht.Diff a b` -- unified diff
 - `tesht.StartHttpServer [port]` -- HTTP fixture for tests
 
@@ -160,17 +162,41 @@ Subtest failures inside `tesht.Run` are also propagated to tesht's overall
 exit code (previously the subtest's FAIL marker reached stdout but the runner
 still reported overall PASS / exit 0).
 
+## Retry middleware
+
+`tesht.Retry` wraps any command in a retry loop. Options precede the command;
+the command + its args follow (optionally after a `--` separator). Shape
+borrowed from fluentfp/web's `Adapt(handler, opts...)` — a core operation
+modified by composable options rather than a fan-out of per-call wrappers.
+
+```bash
+tesht.Retry --attempts 5 --delay 0.2 --on-exhaust warn -- rm -rf -- "$dir"
+```
+
+Options:
+
+- `--attempts N` — number of attempts (default 5)
+- `--delay SEC` — sleep between attempts (default 0.2; fractional seconds OK)
+- `--on-exhaust MODE` — behavior after attempts are exhausted (default `fail`):
+  - `fail` — return 1
+  - `warn` — log a warning to stderr + return 0
+  - `silent` — return 0
+
+The command's stderr from each attempt is suppressed; surface failures via
+the exhaust policy or by wrapping a command that logs its own diagnostics.
+
 ## Cleanup race tolerance
 
 `tesht.MktempDir`'s deferred cleanup is best-effort. If a test forks a child
 process that outlives the test body (e.g. a background watcher), that child
 may still be writing into the tmpdir when the EXIT trap fires. The cleanup
-retries `rm -rf` on `ENOTEMPTY`/`EBUSY` up to 5 times at 200ms intervals
-(1s total) before giving up. On give-up it logs `warning:
-tesht.removeWithRetry: gave up on <dir> after 5 attempts; child process may
-have leaked` to stderr and returns 0, so the test verdict reflects assertion
-results, not cleanup luck. If you see the warning, look for a forked child
-that should be reaped before the test body returns.
+delegates to `tesht.Retry --attempts 5 --delay 0.2 --on-exhaust warn --
+rm -rf -- <dir>`, which retries on `ENOTEMPTY`/`EBUSY` up to 5 times at 200ms
+intervals (1s total) before giving up. On give-up it logs `warning:
+tesht.Retry: 5 attempts exhausted: rm -rf -- <dir>` to stderr and returns 0,
+so the test verdict reflects assertion results, not cleanup luck. If you see
+the warning, look for a forked child that should be reaped before the test
+body returns.
 
 ## When to write a tesht test
 

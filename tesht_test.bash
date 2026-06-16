@@ -603,56 +603,85 @@ test_assertion_failure_fails_test() {
   tesht.Run ${!case@}
 }
 
-# test_removeWithRetry verifies the cleanup-race retry helper (#37012). Under
-# fast-finishing tests, a forked child writer can still be writing into the
-# tmpdir when MktempDir's EXIT-trap cleanup runs; the inline rm -rf then races,
-# fails with ENOTEMPTY, and flips a passing test to FAIL. removeWithRetry
-# bounds the wait at 5×200ms and (if the budget is exhausted) logs a warning +
-# returns 0 so the test verdict is decided by assertions, not cleanup luck.
-#
-# The persistent-failure case stubs rm and sleep inside a capture subshell so
-# the contract (5 attempts, warning, rc=0) is exercised deterministically
-# without depending on filesystem race timing, which is too jittery for a
-# reliable test.
-test_removeWithRetry() {
+# test_Retry verifies the composable retry middleware (#37012 follow-up).
+# Covers: success on first call, --on-exhaust warn (cleanup-race policy used
+# by tesht.MktempDir), --on-exhaust fail (default), --on-exhaust silent,
+# attempt-count contract, missing-command guard, and unknown-option guard.
+# The exhaust-policy cases stub the wrapped command + sleep inside a capture
+# subshell so the contract is exercised deterministically without depending
+# on filesystem race timing.
+test_Retry() {
   local -A case1=(
-    [name]='quiet directory removes cleanly with no output'
-    [mockRmFail]=0
+    [name]='success on first call returns 0 with no output'
+    [command]='tesht.Retry -- true'
+    [wantrc]=0
+    [want]=''
   )
 
   local -A case2=(
-    [name]='warns and returns 0 when rm persistently fails'
-    [mockRmFail]=1
+    [name]='on-exhaust warn logs warning and returns 0'
+    [command]='sleep() { :; }; tesht.Retry --attempts 3 --on-exhaust warn -- false 2>&1'
+    [wantrc]=0
+    [wantSubstr]='warning: tesht.Retry: 3 attempts exhausted: false'
+  )
+
+  local -A case3=(
+    [name]='on-exhaust fail (default) returns 1 with no output'
+    [command]='sleep() { :; }; tesht.Retry --attempts 3 -- false'
+    [wantrc]=1
+    [want]=''
+  )
+
+  local -A case4=(
+    [name]='on-exhaust silent returns 0 with no output'
+    [command]='sleep() { :; }; tesht.Retry --attempts 3 --on-exhaust silent -- false'
+    [wantrc]=0
+    [want]=''
+  )
+
+  local -A case5=(
+    [name]='attempts the command N times before giving up'
+    # Counts attempts via a stub that appends to a file; expects exactly N.
+    [command]='counter=$(mktemp); attempt() { echo x >>"$counter"; return 1; }; sleep() { :; }; tesht.Retry --attempts 4 --on-exhaust silent -- attempt; wc -l <"$counter" | tr -d " "'
+    [wantrc]=0
+    [want]='4'
+  )
+
+  local -A case6=(
+    [name]='missing command after options errors with rc=2'
+    [command]='tesht.Retry --attempts 2 2>&1'
+    [wantrc]=2
+    [wantSubstr]='missing command after options'
+  )
+
+  local -A case7=(
+    [name]='unknown option errors with rc=2'
+    [command]='tesht.Retry --bogus foo -- true 2>&1'
+    [wantrc]=2
+    [wantSubstr]='unknown option: --bogus'
+  )
+
+  local -A case8=(
+    [name]='accepts trailing command without -- separator'
+    [command]='tesht.Retry --attempts 1 true'
+    [wantrc]=0
+    [want]=''
   )
 
   subtest() {
     local casename=$1
+    local wantSubstr=''
     eval "$(tesht.Inherit $casename)"
-
-    ## arrange
-    local dir
-    tesht.MktempDir dir || return 128
 
     ## act
     local got rc=0
-    if (( mockRmFail )); then
-      got=$(
-        rm() { return 1; }
-        sleep() { :; }
-        tesht.removeWithRetry "$dir" 2>&1
-      ) && rc=$? || rc=$?
-    else
-      got=$(tesht.removeWithRetry "$dir" 2>&1) && rc=$? || rc=$?
-    fi
+    got=$(eval "$command") && rc=$? || rc=$?
 
-    ## assert
-    tesht.AssertRC $rc 0
-    if (( mockRmFail )); then
-      [[ $got == *"gave up on"* ]] || { tesht.Log "expected 'gave up on' warning, got: $got"; return 1; }
-    else
-      [[ -z $got ]] || { tesht.Log "expected no output on quiet dir, got: $got"; return 1; }
-      [[ ! -e $dir ]] || { tesht.Log "directory should be removed: $dir"; return 1; }
-    fi
+    ## assert: rc always; substring opt-in; exact-want opt-in (skipped if wantSubstr set)
+    tesht.AssertRC $rc $wantrc || return 1
+    [[ -z $wantSubstr ]] || [[ $got == *"$wantSubstr"* ]] \
+      || { tesht.Log "missing substring '$wantSubstr' in: $got"; return 1; }
+    [[ -n $wantSubstr ]] || tesht.AssertGot "$got" "$want"
   }
 
   tesht.Run ${!case@}
