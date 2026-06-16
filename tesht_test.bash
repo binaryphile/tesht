@@ -603,6 +603,61 @@ test_assertion_failure_fails_test() {
   tesht.Run ${!case@}
 }
 
+# test_removeWithRetry verifies the cleanup-race retry helper (#37012). Under
+# fast-finishing tests, a forked child writer can still be writing into the
+# tmpdir when MktempDir's EXIT-trap cleanup runs; the inline rm -rf then races,
+# fails with ENOTEMPTY, and flips a passing test to FAIL. removeWithRetry
+# bounds the wait at 5×200ms and (if the budget is exhausted) logs a warning +
+# returns 0 so the test verdict is decided by assertions, not cleanup luck.
+#
+# The persistent-failure case stubs rm and sleep inside a capture subshell so
+# the contract (5 attempts, warning, rc=0) is exercised deterministically
+# without depending on filesystem race timing, which is too jittery for a
+# reliable test.
+test_removeWithRetry() {
+  local -A case1=(
+    [name]='quiet directory removes cleanly with no output'
+    [mockRmFail]=0
+  )
+
+  local -A case2=(
+    [name]='warns and returns 0 when rm persistently fails'
+    [mockRmFail]=1
+  )
+
+  subtest() {
+    local casename=$1
+    eval "$(tesht.Inherit $casename)"
+
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+
+    ## act
+    local got rc=0
+    if (( mockRmFail )); then
+      got=$(
+        rm() { return 1; }
+        sleep() { :; }
+        tesht.removeWithRetry "$dir" 2>&1
+      ) && rc=$? || rc=$?
+    else
+      got=$(tesht.removeWithRetry "$dir" 2>&1) && rc=$? || rc=$?
+    fi
+
+    ## assert
+    tesht.AssertRC $rc 0
+    if (( mockRmFail )); then
+      [[ $got == *"gave up on"* ]] || { tesht.Log "expected 'gave up on' warning, got: $got"; return 1; }
+    else
+      [[ -z $got ]] || { tesht.Log "expected no output on quiet dir, got: $got"; return 1; }
+      [[ ! -e $dir ]] || { tesht.Log "directory should be removed: $dir"; return 1; }
+    fi
+  }
+
+  tesht.Run ${!case@}
+}
+
 ## helpers
 
 echoLines() {

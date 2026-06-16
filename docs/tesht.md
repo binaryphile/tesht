@@ -74,7 +74,8 @@ test_doThing() {
 - `tesht.Inherit $casename` -- unpack an associative-array case into locals
 - `tesht.Log msg` -- print from a test
 - `tesht.MktempDir dir` -- temp dir with auto-cleanup; writes path into the
-  named variable (out-param), registers `rm -rf` via `tesht.Defer`
+  named variable (out-param), registers a retrying `rm -rf` via `tesht.Defer`
+  (see "Cleanup race tolerance" below)
 - `tesht.Defer "command"` -- stack a command on the EXIT trap (FIFO)
 - `tesht.Diff a b` -- unified diff
 - `tesht.StartHttpServer [port]` -- HTTP fixture for tests
@@ -158,6 +159,18 @@ not taint the outer verdict.
 Subtest failures inside `tesht.Run` are also propagated to tesht's overall
 exit code (previously the subtest's FAIL marker reached stdout but the runner
 still reported overall PASS / exit 0).
+
+## Cleanup race tolerance
+
+`tesht.MktempDir`'s deferred cleanup is best-effort. If a test forks a child
+process that outlives the test body (e.g. a background watcher), that child
+may still be writing into the tmpdir when the EXIT trap fires. The cleanup
+retries `rm -rf` on `ENOTEMPTY`/`EBUSY` up to 5 times at 200ms intervals
+(1s total) before giving up. On give-up it logs `warning:
+tesht.removeWithRetry: gave up on <dir> after 5 attempts; child process may
+have leaked` to stderr and returns 0, so the test verdict reflects assertion
+results, not cleanup luck. If you see the warning, look for a forked child
+that should be reaped before the test body returns.
 
 ## When to write a tesht test
 

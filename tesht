@@ -217,7 +217,24 @@ tesht.MktempDir() {
 
   [[ -d $DIR ]] || { echo 'temporary directory was made but does not exist now'; return 1; }
 
-  tesht.Defer "rm -rf $DIR"
+  tesht.Defer "tesht.removeWithRetry $DIR"
+}
+
+# tesht.removeWithRetry rm -rf's a directory, retrying on ENOTEMPTY/EBUSY for up
+# to 5 attempts at 200ms intervals (1s total). After exhausting retries it logs
+# a warning and returns 0 so a child process still writing into a test's
+# tmpdir at EXIT-trap time does not flip a passing test to FAIL on the cleanup
+# seam (#37012; race exposed by agent-orchestration fakebin-golden speedup).
+# Test-body assertions are the source of truth; cleanup is best-effort.
+tesht.removeWithRetry() {
+  local dir=$1
+  local -i attempt
+  for attempt in 1 2 3 4 5; do
+    rm -rf -- "$dir" 2>/dev/null && return 0
+    sleep 0.2
+  done
+  echo "warning: tesht.removeWithRetry: gave up on $dir after 5 attempts; child process may have leaked" >&2
+  return 0
 }
 
 # tesht.portIsInUse detects whether port is already in use.
