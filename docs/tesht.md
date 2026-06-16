@@ -97,6 +97,27 @@ sourceHelpers() {
 }
 ```
 
+## Script discovery
+
+Test files that need to locate adjacent scripts (or other files relative to
+themselves) cannot rely on `$BASH_SOURCE`. Tesht reads each test file's source
+and runs it with `eval`, so inside test functions `BASH_SOURCE[0]` resolves to
+the `tesht` binary, not the test file's path. The common idiom
+
+```bash
+Script=$(cd "$(dirname "$BASH_SOURCE")"; pwd)/scriptname  # WRONG under tesht
+```
+
+silently produces the wrong path.
+
+Use `$TESHT_TEST_FILE` instead. Tesht exports it before evaluating each test
+file's source; its value is the absolute path to the test file currently being
+run:
+
+```bash
+Script=$(dirname "$TESHT_TEST_FILE")/scriptname
+```
+
 ## Subshell isolation
 
 Each test runs inside `( ... )`. Variable changes, `cd`, `set -e`/`-u`/

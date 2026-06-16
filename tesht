@@ -374,12 +374,17 @@ tesht.test() {
 # names match runRegexp (bash =~ regex; empty = match all).
 # It outputs success or failure.
 # It returns an error result code if there was a failure.
+#
+# Exports TESHT_TEST_FILE (absolute path) so test bodies can locate adjacent
+# scripts. Inside the eval'd test source, $BASH_SOURCE refers to the tesht
+# binary, not the test file -- see "Script discovery" in docs/tesht.md.
 tesht.testFile() {
   local filename=$1 runRegexp=${2:-}
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
   local testSource_=$(<$filename)
+  export TESHT_TEST_FILE=$(realpath -- "$filename")
   for testname in ${testsInFile[@]}; do
     [[ -z $runRegexp || $testname =~ $runRegexp ]] && tesht.test "$testSource_" $testname
   done

@@ -514,6 +514,29 @@ test_cli_positional_directory_with_run_filter() {
   [[ $got != *test_skip* ]] || { tesht.Log "test_skip should be filtered out, got: $got"; return 1; }
 }
 
+# test_cli_TESHT_TEST_FILE_env_var verifies tesht exports the test file's
+# absolute path so test bodies can locate adjacent scripts without falling
+# back to $PWD or git rev-parse. Inside the eval'd test source, $BASH_SOURCE
+# refers to tesht itself, not the test file -- $TESHT_TEST_FILE is the fix.
+test_cli_TESHT_TEST_FILE_env_var() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  mkdir -p sub
+  echoLines \
+    'test_envvar() {' \
+    '  [[ -n ${TESHT_TEST_FILE:-} ]] || { echo "TESHT_TEST_FILE unset"; return 1; }' \
+    '  [[ $TESHT_TEST_FILE == /* ]] || { echo "TESHT_TEST_FILE not absolute: $TESHT_TEST_FILE"; return 1; }' \
+    '  [[ $TESHT_TEST_FILE == */sub/dummy_test.bash ]] || { echo "TESHT_TEST_FILE wrong: $TESHT_TEST_FILE"; return 1; }' \
+    '  [[ -f $TESHT_TEST_FILE ]] || { echo "TESHT_TEST_FILE does not exist: $TESHT_TEST_FILE"; return 1; }' \
+    '}' >sub/dummy_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT sub/dummy_test.bash 2>&1) && rc=$? || rc=$?
+
+  tesht.AssertRC $rc 0 || { tesht.Log "output: $got"; return 1; }
+}
+
 ## helpers
 
 echoLines() {
