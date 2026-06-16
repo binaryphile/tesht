@@ -537,6 +537,72 @@ test_cli_TESHT_TEST_FILE_env_var() {
   tesht.AssertRC $rc 0 || { tesht.Log "output: $got"; return 1; }
 }
 
+# test_assertion_failure_fails_test verifies that a mid-body assertion failure
+# causes the test to FAIL even when a later command returns 0 (#25287).
+# Pre-fix, $testname && rc=$? || rc=$? suppressed set -e inside the test body,
+# so a failing AssertGot followed by a passing `:` would silently report PASS.
+test_assertion_failure_fails_test() {
+  local -A case1=(
+    [name]='non-subtest: mid-body AssertGot failure overrides rc=0 from final cmd'
+
+    [body]='test_silent_fail() {
+      tesht.AssertGot a b
+      :
+    }'
+    [testname]='test_silent_fail'
+  )
+
+  local -A case2=(
+    [name]='non-subtest: mid-body AssertRC failure overrides rc=0 from final cmd'
+
+    [body]='test_silent_fail_rc() {
+      tesht.AssertRC 0 1
+      :
+    }'
+    [testname]='test_silent_fail_rc'
+  )
+
+  local -A case3=(
+    [name]='subtest: mid-body AssertGot failure inside tesht.Run subtest fails test'
+
+    [body]='test_silent_fail_sub() {
+      local -A case=([name]=slug)
+      subtest() {
+        tesht.AssertGot a b
+        :
+      }
+      tesht.Run case
+    }'
+    [testname]='test_silent_fail_sub'
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    eval "$(tesht.Inherit $casename)"
+
+    local dir
+    tesht.MktempDir dir || return 128
+    cd $dir
+
+    echoLines "$body" >dummy_test.bash
+
+    ## act
+    local got rc=0
+    got=$($TESHT_PATHT -run "$testname" dummy_test.bash 2>&1) || rc=$?
+
+    ## assert: tesht's overall exit was non-zero AND the test was reported FAIL
+    tesht.Softly <<'    END'
+      [[ $rc -ne 0 ]] || { tesht.Log "expected non-zero rc, got rc=$rc; output: $got"; return 1; }
+      [[ $got == *FAIL* ]] || { tesht.Log "expected FAIL marker in output, got: $got"; return 1; }
+      [[ $got == *$testname* ]] || { tesht.Log "expected '$testname' in output, got: $got"; return 1; }
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
 ## helpers
 
 echoLines() {

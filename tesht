@@ -96,11 +96,31 @@ tesht.Main() {
   return $failed
 }
 
+# tesht.failFlag signals a mid-body assertion failure to the test runner
+# (#25287). Bash suppresses set -e inside functions invoked from && || compound
+# lists, so a returning rc=0 from the function's last command would silently
+# pass when an earlier assertion failed. Helpers call this to raise a sentinel
+# the runner checks after the test/subtest body returns.
+#
+# The PID gate (BASHPID == TESHT_FAIL_FLAG_PID) scopes the flag to the
+# test/subtest's own subshell: an assertion intentionally exercised inside a
+# nested $(...) or (...) -- e.g. helper self-tests that capture the helper's
+# failure output -- runs at a different BASHPID and does not taint the outer
+# verdict.
+tesht.failFlag() {
+  [[ -z ${TESHT_FAIL_FLAG:-} ]] && return
+  [[ ${TESHT_FAIL_FLAG_PID:-} == "$BASHPID" ]] || return
+  touch "$TESHT_FAIL_FLAG"
+}
+
 # tesht.AssertGot returns whether the items match and, if not, outputs a message.
 tesht.AssertGot() {
   local got=$1 want=${2:-}
 
   [[ $got == "$want" ]] && return
+
+  tesht.failFlag
+
   cat <<END
 
 
@@ -120,6 +140,7 @@ tesht.AssertRC() {
   local rc=$1 wantrc=$2
 
   (( rc == wantrc )) && return
+  tesht.failFlag
   tesht.Log "error: rc = $rc, want: $wantrc"
   return 1
 }
@@ -249,7 +270,16 @@ tesht.runSubtest() {
   printf $columns $RunT $testname
 
   local startTime=$($UnixMilliFuncT) rc
-  (subtest $mapname) && rc=$? || rc=$?
+  # Reset the per-test fail-flag before each subtest so a prior subtest's
+  # assertion failures don't leak into this one (#25287). Set
+  # TESHT_FAIL_FLAG_PID to the subtest subshell's BASHPID so helpers called
+  # directly inside the subtest body raise the flag, while helpers exercised
+  # via nested $(...) (e.g. in helper self-tests) do not.
+  [[ -n ${TESHT_FAIL_FLAG:-} ]] && rm -f "$TESHT_FAIL_FLAG"
+  ( TESHT_FAIL_FLAG_PID=$BASHPID; subtest $mapname ) && rc=$? || rc=$?
+  # Override rc=0 to rc=1 if any assertion helper raised the fail-flag inside
+  # the subtest body (set -e is suppressed by the && || invocation shape).
+  (( rc == 0 )) && [[ -n ${TESHT_FAIL_FLAG:-} && -e $TESHT_FAIL_FLAG ]] && rc=1
   local endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
@@ -284,6 +314,7 @@ tesht.Smoke() {
   local got_ rc=0
   got_=$("$@" 2>&1) || rc=$?
   (( rc == want )) && return 0
+  tesht.failFlag
   tesht.Log "FAIL: expected rc=$want, got rc=$rc from: $*"
   tesht.Log "  output: $got_"
   return 1
@@ -327,8 +358,19 @@ tesht.test() {
   local startTime=$($UnixMilliFuncT)
 
   local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
+  # Per-test fail-flag sentinel (#25287). Assertion helpers touch this file on
+  # failure; tesht.test (and tesht.runSubtest for subtests) checks the file
+  # after the test body returns to override a misleading rc=0 from set -e
+  # being suppressed by the && || invocation shape.
+  local failflag=$(mktemp -u /tmp/tesht.failflag.XXXXXX)
+  export TESHT_FAIL_FLAG=$failflag
   local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
   (
+    # Scope fail-flag touches to this test's subshell (#25287). Helpers
+    # called inside nested $(...) or (...) subshells (e.g. helper self-tests
+    # that capture an intentional assertion failure) run at a different
+    # BASHPID and are correctly ignored by the fail-flag mechanism.
+    TESHT_FAIL_FLAG_PID=$BASHPID
     eval "$testSource_"
 
     [[ $(declare -f $testname) == *tesht.Run* ]] && hasSubtests=1
@@ -337,9 +379,16 @@ tesht.test() {
     (( hasSubtests )) || printf $columns $RunT $testname
 
     $testname && rc=$? || rc=$?
+    # Override rc=0 to rc=1 if an assertion helper raised the fail-flag during
+    # the test body. Only relevant for non-subtest tests; tesht.runSubtest
+    # handles the flag per-subtest. Subtests' rc is reflected via the outer
+    # subtestPassCount aggregation, so the test-level rc here stays as-is.
+    (( hasSubtests )) || { (( rc == 0 )) && [[ -e $TESHT_FAIL_FLAG ]] && rc=1; }
     (( hasSubtests )) && echo "$subtestTestCount $subtestPassCount" >$tmpname
     exit $rc
   ) && rc=$? || rc=$?
+  rm -f "$failflag"
+  unset TESHT_FAIL_FLAG
 
   [[ -e $tmpname ]] && {
     hasSubtests=1
@@ -354,6 +403,11 @@ tesht.test() {
     TestCountT+=$subtestTestCount
     PassCountT+=$subtestPassCount
 
+    # Propagate subtest failure to caller's `failed` (#25287). Without this,
+    # subtest FAIL markers reach stdout but tesht.Main reports overall PASS
+    # and exits 0 — same silent-pass class as the assertion-fail-flag bug.
+    (( rc == 128 )) && return 128
+    (( rc != 0 )) && failed=1
     return
   else
     TestCountT+=1
