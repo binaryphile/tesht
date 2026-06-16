@@ -126,6 +126,39 @@ the test's subshell -- they cannot affect other tests or the runner.
 Filesystem state outside `tesht.MktempDir` is shared, so clean up explicitly
 when writing outside a temp dir.
 
+## Mid-body assertion failures
+
+A failing `tesht.AssertGot`, `tesht.AssertRC`, or `tesht.Smoke` anywhere in a
+test body causes the test (or subtest) to FAIL, even if a later command in the
+same body returns 0. Earlier versions of tesht silently passed such tests
+because bash suppresses `set -e` inside functions invoked from `&& ||` compound
+lists (the test runner's invocation shape), so an assertion's nonzero return
+was masked by the function's final command. Tesht now sets a per-test
+fail-flag sentinel that the assertion helpers touch on failure; the runner
+checks it after the body returns and overrides `rc=0` to `rc=1` when set.
+
+Practically, this means a test like
+
+```bash
+test_thing() {
+  tesht.AssertGot "$got" "$want"   # mid-body — used to silent-pass
+  : # final command rc=0
+}
+```
+
+is now reported FAIL, as you'd expect. You can drop the per-assertion
+`{ tesht.Log msg; return 1; }` boilerplate that older test files use to force
+mid-body failures through.
+
+The fail-flag is scoped to the test's BASHPID, so an assertion deliberately
+exercised inside a nested `$(...)` or `(...)` -- e.g. when a helper's
+self-tests capture its failure output -- runs at a different BASHPID and does
+not taint the outer verdict.
+
+Subtest failures inside `tesht.Run` are also propagated to tesht's overall
+exit code (previously the subtest's FAIL marker reached stdout but the runner
+still reported overall PASS / exit 0).
+
 ## When to write a tesht test
 
 - Whenever you change a bash script's behavior. The bash style guide treats
