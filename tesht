@@ -31,6 +31,9 @@ Usage:
 
     -run REGEXP         filter test names by bash native regex (=~)
                         (equals-syntax variant: -run=REGEXP)
+    -j N | --jobs N     run up to N tests concurrently within each file
+                        (default: 1 = serial; bare -j uses \$(nproc))
+                        (equals-syntax variant: -j=N)
     -h | --help         show this message and exit
     -x | --trace        enable debug tracing
     --                  stop option processing
@@ -50,6 +53,8 @@ Usage:
     $Prog -run TestMyFunction          # filter by name regex (any file)
     $Prog my_test.bash -run TestFoo    # file + name filter
     $Prog -run=TestFoo my_test.bash    # equals-syntax variant
+    $Prog -j 4 my_test.bash            # run 4 tests in parallel within the file
+    $Prog -j                           # bare form: parallel at \$(nproc) workers
 
   Matches Go's go-test convention: positional args are files; -run
   REGEXP filters test names. Empty regex matches all tests.
@@ -72,15 +77,17 @@ UnixMilliFuncT=tesht.UnixMilli
 # It outputs success or failure.
 #
 # Args: $1 = test-name regex filter (empty = match all);
-#       $2 = newline-separated list of test files (typically built via tesht.ListOf).
+#       $2 = newline-separated list of test files (typically built via tesht.ListOf);
+#       $3 = within-file parallelism (default 1 = serial; -j N flag, #37833).
 tesht.Main() {
   local runRegexp=${1:-} filenames=( ${2:-} )
+  local -i jobs=${3:-1}
 
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
   local startTime=$($UnixMilliFuncT)
 
   for filename in "${filenames[@]}"; do
-    tesht.testFile $filename "$runRegexp" || failed=1
+    tesht.testFile $filename "$runRegexp" $jobs || failed=1
   done
 
   (( TestCountT > 0 )) || failed=2
@@ -479,15 +486,67 @@ tesht.test() {
 # Exports TESHT_TEST_FILE (absolute path) so test bodies can locate adjacent
 # scripts. Inside the eval'd test source, $BASH_SOURCE refers to the tesht
 # binary, not the test file -- see "Script discovery" in docs/tesht.md.
+#
+# When jobs > 1 (#37833), tests within the file run concurrently across N
+# background workers. Each worker captures its test's stdout+stderr to a
+# per-test buffer and emits its TestCountT/PassCountT/failed deltas to a
+# per-test counter file. After all workers complete, the parent serializes
+# the per-test buffers in source-file order and accumulates the deltas, so
+# the printed output and pass/fail counts match the serial path.
 tesht.testFile() {
   local filename=$1 runRegexp=${2:-}
+  local -i jobs=${3:-1}
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
   local testSource_=$(<$filename)
   export TESHT_TEST_FILE=$(realpath -- "$filename")
+
+  if (( jobs <= 1 )); then
+    for testname in ${testsInFile[@]}; do
+      [[ -z $runRegexp || $testname =~ $runRegexp ]] && tesht.test "$testSource_" $testname
+    done
+    return $failed
+  fi
+
+  # Parallel path: filter, fan out across `jobs` workers, serialize results.
+  local -a selectedTests=()
   for testname in ${testsInFile[@]}; do
-    [[ -z $runRegexp || $testname =~ $runRegexp ]] && tesht.test "$testSource_" $testname
+    [[ -z $runRegexp || $testname =~ $runRegexp ]] && selectedTests+=( "$testname" )
+  done
+  (( ${#selectedTests[@]} == 0 )) && return 0
+
+  local parDir
+  parDir=$(mktemp -d /tmp/tesht.par.XXXXXX) ||
+    { echo 'tesht.testFile: could not create parallel-results directory' >&2; return 1; }
+  tesht.Defer "tesht.Retry --attempts 5 --delay 0.2 --on-exhaust warn -- rm -rf -- $parDir"
+
+  local -i idx
+  for (( idx = 0; idx < ${#selectedTests[@]}; idx++ )); do
+    # Throttle: keep at most `jobs` workers running concurrently. `jobs -pr`
+    # lists running background PIDs; `wait -n` reaps any single one.
+    while (( $(jobs -pr | wc -l) >= jobs )); do
+      wait -n 2>/dev/null || true
+    done
+    (
+      # Workers inherit the parent's EXIT trap (parDir-cleanup Defer). Reset
+      # it so a worker exit doesn't rm -rf parDir out from under siblings.
+      trap - EXIT
+      local -i TestCountT=0 PassCountT=0 failed=0
+      tesht.test "$testSource_" "${selectedTests[idx]}" >"$parDir/$idx.out" 2>&1 || true
+      echo "$TestCountT $PassCountT $failed" >"$parDir/$idx.cnt"
+    ) &
+  done
+  wait
+
+  local -i tc pc f
+  for (( idx = 0; idx < ${#selectedTests[@]}; idx++ )); do
+    cat -- "$parDir/$idx.out"
+    tc=0; pc=0; f=0
+    IFS=' ' read -r tc pc f <"$parDir/$idx.cnt" || true
+    TestCountT+=$tc
+    PassCountT+=$pc
+    (( f )) && failed=1
   done
 
   return $failed
@@ -506,17 +565,33 @@ tesht.UnixMilli() {
 # (everything after is positional, including args that start with `-`).
 RunRegexpT=""
 FilenamesT=()
+JobsT=1
 while (( $# )); do
   case $1 in
     -h|--help)  echo "$Usage_"; exit;;
     -x|--trace) set -x; shift;;
     -run)       shift; RunRegexpT=${1:?-run requires a regexp}; shift;;
     -run=*)     RunRegexpT=${1#-run=}; shift;;
+    -j|--jobs)
+      # Bare `-j` (no integer next) -> nproc. `-j N` consumes N.
+      if [[ ${2:-} =~ ^[0-9]+$ ]]; then
+        JobsT=$2; shift 2
+      else
+        JobsT=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+        shift
+      fi
+      ;;
+    -j=*|--jobs=*)
+      JobsT=${1#*=}
+      [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: -j requires a non-negative integer, got: $JobsT" >&2; exit 2; }
+      shift
+      ;;
     --)         shift; FilenamesT+=( "$@" ); break;;
     -*)         echo "error: unknown option: $1" >&2; exit 2;;
     *)          FilenamesT+=( "$1" ); shift;;
   esac
 done
+(( JobsT > 0 )) || JobsT=1   # treat -j 0 as serial (defensive)
 
 # Inverted file-look guard — 4-branch table:
 #   directory -> expand to shallow *_test.bash files (branch 1)
@@ -558,4 +633,4 @@ fi
 return 2>/dev/null
 set -euf
 
-tesht.Main "$RunRegexpT" "$(tesht.ListOf "${FilenamesT[@]}")"
+tesht.Main "$RunRegexpT" "$(tesht.ListOf "${FilenamesT[@]}")" "$JobsT"

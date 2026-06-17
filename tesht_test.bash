@@ -687,6 +687,134 @@ test_Retry() {
   tesht.Run ${!case@}
 }
 
+# test_cli_j_parallel_pass_count verifies -j N produces the same overall
+# pass count and exit code as the serial path for the same file (#37833).
+test_cli_j_parallel_pass_count() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  echoLines \
+    'test_a() { :; }' \
+    'test_b() { :; }' \
+    'test_c() { :; }' \
+    'test_d() { :; }' \
+    'test_e() { :; }' \
+    >many_test.bash
+
+  local serialTail parallelTail
+  serialTail=$($TESHT_PATHT many_test.bash 2>&1 | tail -1)
+  parallelTail=$($TESHT_PATHT -j 4 many_test.bash 2>&1 | tail -1)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$serialTail" "5/5"
+    tesht.AssertGot "$parallelTail" "5/5"
+  END
+}
+
+# test_cli_j_parallel_mixed_pass_fail verifies pass/fail bookkeeping and
+# overall exit code under -j N when some tests fail (#37833). Without
+# per-worker counter capture, the parent would see PassCountT=TestCountT=0
+# (workers mutate local copies) and the `failed=1` signal would be lost.
+test_cli_j_parallel_mixed_pass_fail() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  echoLines \
+    'test_a() { :; }' \
+    'test_b() { return 1; }' \
+    'test_c() { :; }' \
+    'test_d() { :; }' \
+    'test_e() { return 1; }' \
+    >mixed_test.bash
+
+  local got rc=0
+  got=$($TESHT_PATHT -j 3 mixed_test.bash 2>&1) || rc=$?
+
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 1
+    [[ $got == *3/5* ]] || { tesht.Log "expected '3/5' in output, got: $got"; return 1; }
+    [[ $got == *test_a* ]] || { tesht.Log "expected 'test_a' in output, got: $got"; return 1; }
+    [[ $got == *test_e* ]] || { tesht.Log "expected 'test_e' in output, got: $got"; return 1; }
+  END
+}
+
+# test_cli_j_parallel_isolation verifies 20 replicated tests all pass under
+# -j 4, exercising the per-test MktempDir + fail-flag isolation under
+# concurrent execution (#37833 acceptance criterion 2).
+test_cli_j_parallel_isolation() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  {
+    local -i i
+    for (( i = 1; i <= 20; i++ )); do
+      printf 'test_rep%d() {\n  local d\n  tesht.MktempDir d || return 128\n  echo hello >"$d/marker"\n  [[ -f "$d/marker" ]] || return 1\n  [[ $(cat "$d/marker") == hello ]] || return 1\n}\n' $i
+    done
+  } >rep_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT -j 4 rep_test.bash 2>&1) && rc=$? || rc=$?
+
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 0
+    [[ $got == *20/20* ]] || { tesht.Log "expected '20/20' in output, got: $got"; return 1; }
+  END
+}
+
+# test_cli_j_parallel_speedup verifies -j N is materially faster than serial
+# on parallelizable tests. Threshold: parallel < 2/3 * serial (a 4-test
+# 0.3s-sleep fan-out under -j 4 typically lands at ~0.4s vs ~1.2s serial).
+test_cli_j_parallel_speedup() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  echoLines \
+    'test_s1() { sleep 0.3; }' \
+    'test_s2() { sleep 0.3; }' \
+    'test_s3() { sleep 0.3; }' \
+    'test_s4() { sleep 0.3; }' \
+    >slow_test.bash
+
+  local startSerialMs endSerialMs startParMs endParMs
+  startSerialMs=$(tesht.UnixMilli)
+  $TESHT_PATHT slow_test.bash >/dev/null 2>&1
+  endSerialMs=$(tesht.UnixMilli)
+
+  startParMs=$(tesht.UnixMilli)
+  $TESHT_PATHT -j 4 slow_test.bash >/dev/null 2>&1
+  endParMs=$(tesht.UnixMilli)
+
+  local -i serialMs=$(( endSerialMs - startSerialMs ))
+  local -i parMs=$(( endParMs - startParMs ))
+
+  (( parMs * 3 < serialMs * 2 )) || {
+    tesht.Log "expected parallel measurably faster: serial=${serialMs}ms parallel=${parMs}ms"
+    return 1
+  }
+}
+
+# test_cli_j_bare_parses verifies bare `-j` (no integer) is accepted and the
+# next positional arg is still recognized as a file (#37833).
+test_cli_j_bare_parses() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  echoLines "test_one() { :; }" >dummy_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT -j dummy_test.bash 2>&1) && rc=$? || rc=$?
+
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 0
+    [[ $got == *test_one* ]] || { tesht.Log "expected 'test_one' in output, got: $got"; return 1; }
+    [[ $got == *1/1* ]] || { tesht.Log "expected '1/1' in output, got: $got"; return 1; }
+  END
+}
+
 ## helpers
 
 echoLines() {
