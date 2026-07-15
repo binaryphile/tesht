@@ -117,6 +117,8 @@ test_doThing() {
 - `tesht.Retry [options] [--] cmd [args...]` -- composable retry middleware
   (see "Retry middleware" below)
 - `tesht.Diff a b` -- unified diff
+- `tesht.ListOf arg...` -- join arguments with newlines into an IFS-serialized
+  list string (handy for building multi-line case fields like `[want]`)
 - `tesht.StartHttpServer [port]` -- HTTP fixture for tests
 
 ## Sourcing the script under test
