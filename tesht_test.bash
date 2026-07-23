@@ -271,6 +271,53 @@ test_ListOf() {
   tesht.Run ${!case@}
 }
 
+# test_declareVar tests that declareVar detects arrays by value shape, not
+# merely by a name ending in 's' (era memory a69e08ff25be; tesht #67489).
+test_declareVar() {
+  local -A case1=(
+    [name]='plural name with array-shaped value declares an array'
+
+    [command]='tesht.declareVar names "(a b c)"'
+    [want]="declare -a names='(a b c)'"
+  )
+
+  local -A case2=(
+    [name]='name ending in s but scalar value declares a scalar, not an array'
+
+    [command]='tesht.declareVar showStatus foo'
+    [want]="declare showStatus='foo'"
+  )
+
+  local -A case3=(
+    [name]='trailing-underscore name with array-shaped value declares an array'
+
+    [command]='tesht.declareVar names_ "(a b)"'
+    [want]="declare -a names_='(a b)'"
+  )
+
+  local -A case4=(
+    [name]='ordinary scalar name and value declares a scalar'
+
+    [command]='tesht.declareVar name foo'
+    [want]="declare name='foo'"
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    eval "$(tesht.Inherit $casename)"
+
+    ## act
+    local got=$(eval "$command")
+
+    ## assert
+    tesht.AssertGot "$got" "$want"
+  }
+
+  tesht.Run ${!case@}
+}
+
 # test_Inherit tests that Inherit creates an array from array notation when a key is plural.
 test_Inherit() {
   ## arrange

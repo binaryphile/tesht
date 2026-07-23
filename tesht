@@ -155,7 +155,7 @@ tesht.AssertRC() {
 # tesht.declareVar returns a declaration for a variable, handling arrays if the name is plural.
 tesht.declareVar() {
   local name=$1 value=$2
-  [[ $name == *s || $name == *s_ && $value == '('*')' ]] &&
+  [[ ($name == *s || $name == *s_) && $value == '('*')' ]] &&
     echo "declare -a $name=${value@Q}" ||
     echo "declare $name=${value@Q}"
 }
