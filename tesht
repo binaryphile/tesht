@@ -506,7 +506,24 @@ tesht.testFile() {
 
   local failed=0    # overall result -- fails if any individual run fails
   local testsInFile=( $(tesht.listTestnames $filename) )
-  local testSource_=$(<$filename)
+  # Strip the file's own trailing `tesht.Main "$@"` boilerplate line (the
+  # universal per-file entry-point convention every *_test.bash file ends
+  # with) before capturing testSource_. tesht.test's `eval "$testSource_"`
+  # re-evaluates this ENTIRE text once per individual test run; without
+  # stripping, that trailing line fires for real on every eval, and "$@"
+  # at that point is NOT the file's real invocation args -- eval doesn't
+  # reset positional params, so it's still tesht.test's own
+  # ($testSource_, $testname) pair. The stray call then runs tesht.Main
+  # with the TEST NAME as a bogus "filenames" arg, producing a
+  # harmless-but-alarming phantom `awk: fatal: cannot open file
+  # 'test_foo'` + FAIL/0/0 line on EVERY test, in EVERY file, in every
+  # project using tesht (confirmed via a two-line minimal repro). Stripping
+  # the line at capture time (once per file, here) rather than guarding
+  # tesht.Main itself keeps tests that deliberately invoke tesht.Main
+  # directly with their own explicit args (e.g. tesht_test.bash's own
+  # test_Main subtests) working unchanged -- only the literal, universal
+  # trailing boilerplate line is ever removed.
+  local testSource_=$(grep -v '^tesht\.Main "\$@"$' "$filename")
   export TESHT_TEST_FILE=$(realpath -- "$filename")
 
   if (( jobs <= 1 )); then
