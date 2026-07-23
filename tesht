@@ -385,6 +385,13 @@ tesht.Softly() {
 
 # tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
 # It waits until the server is ready before returning.
+#
+# Security note: serves the ENTIRE current working directory for the
+# server's lifetime, localhost-only (127.0.0.1, not network-exposed) but
+# with no file-level scoping or allowlist -- any other local process on
+# the machine can fetch anything under the caller's cwd while the server
+# runs. Callers testing against a subdirectory should `cd` there first
+# rather than relying on any implicit scoping (there is none).
 tesht.StartHttpServer() {
   local port=${1:-8000}
 
