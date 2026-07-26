@@ -20,6 +20,12 @@ tesht -j                           # bare -j: concurrency = $(nproc)
 tesht -x                           # trace mode for debugging
 ```
 
+**`-x`/`--trace` security note**: enables `set -x` for the rest of script
+execution (not scoped to tesht's internals) — subsequent commands,
+including the test file's own body, print fully-expanded argv to stderr.
+Don't pipe/log traced output somewhere persistent or credential-shaped
+argv can leak. Full warning: README.md.
+
 Positional args are test files or directories; `-run REGEXP` filters test names via bash native regex (`=~`). Empty regex matches every test. The `-run` flag accepts both `-run REGEXP` (space-separated) and `-run=REGEXP` (equals-syntax) forms. Matches Go's `go test [-run regexp] [files]` shape.
 
 Directory args expand to `*_test.bash` files at one level deep (shallow; non-recursive). An empty directory errors. For nested test trees, pass an explicit glob (e.g. `tesht path/**/*_test.bash` with `shopt -s globstar`); built-in recursive discovery is deferred until a real use case surfaces.

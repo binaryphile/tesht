@@ -221,6 +221,17 @@ tesht [-x] [-f file1,file2,...] [test_name...]
 - **`-f` flag**: Constrain execution to specific test files (comma-separated)
 - **`-x` flag**: Enable trace output for debugging test discovery and execution
 
+**Security warning**: `-x`/`--trace` enables bash's `set -x` for the
+remainder of script execution, not just tesht's own internals — every
+subsequent command, including whatever the test file's own body runs, is
+printed to stderr with arguments fully expanded, including any
+credentials passed as command-line arguments. Since tesht runs other
+projects' test suites, some of which exercise commands with
+credential-shaped arguments, don't redirect stderr to a persistent log
+file while tracing, and be aware that pasting traced output (e.g. into a
+bug report or chat) can leak secrets that appeared in a traced command's
+argv.
+
 ## Example Output
 
     === RUN         test_Calculator/addition
