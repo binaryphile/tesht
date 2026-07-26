@@ -1,3 +1,9 @@
+---
+applies-to: ["**/*_test.bash"]
+scope: global
+summary: "Tesht table-driven bash test framework — test_* discovery, table-driven pattern, tesht.Run/Inherit, sourcing-test guard."
+---
+
 # tesht
 
 Tesht is the table-driven testing framework for bash scripts in this user's
