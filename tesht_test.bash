@@ -421,6 +421,28 @@ test_cli_positional_file() {
   tesht.AssertRC $rc 0
 }
 
+# test_Defer_failingCommandDoesNotCorruptVerdict verifies tesht #67543's fix:
+# a Defer'd cleanup command that fails on a redundant invocation (e.g. a
+# second `kill` on an already-reaped PID) must not abort the EXIT trap under
+# `set -e` and flip an already-passing test's reported verdict to FAIL.
+test_Defer_failingCommandDoesNotCorruptVerdict() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+  echoLines \
+    'test_passes() {' \
+    '  tesht.Defer "false"' \
+    '  return 0' \
+    '}' \
+    >defer_test.bash
+
+  local got rc
+  got=$($TESHT_PATHT defer_test.bash 2>&1) && rc=$? || rc=$?
+
+  [[ $got == *PASS* ]] || { tesht.Log "expected 'PASS' despite failing Defer, got: $got"; return 1; }
+  tesht.AssertRC $rc 0
+}
+
 # test_cli_multiple_positional_files verifies that two positional files are both executed.
 test_cli_multiple_positional_files() {
   local dir

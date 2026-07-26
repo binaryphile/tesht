@@ -161,10 +161,15 @@ tesht.declareVar() {
 }
 
 # tesht.Defer schedules a command to run on EXIT, preserving any existing EXIT trap.
+# Best-effort by design: the command runs under `|| true` so a Defer'd cleanup
+# command that legitimately fails on a redundant/second invocation (e.g. `kill`
+# on an already-reaped PID, `mv` on a path already restored inline) cannot abort
+# the accumulated EXIT trap under `set -e` and corrupt an already-passing
+# test's reported verdict (tesht #67543).
 tesht.Defer() {
   local command=$1
   local NL=$'\n' # newline works with backgrounding (&) and legal semicolons, semicolon doesn't
-  trap "$command$NL$(tesht.existingDeferlist)" EXIT
+  trap "{ $command; } || true$NL$(tesht.existingDeferlist)" EXIT
 }
 
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
