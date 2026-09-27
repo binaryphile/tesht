@@ -92,6 +92,54 @@ $PassT$Tab${Tab}0ms
   tesht.Run ${!case@}
 }
 
+# test_MainFatal tests that a FATAL test (rc 128) fails the overall verdict and exit status.
+test_MainFatal() {
+  local -A case1=(
+    [name]='fatal test fails the overall verdict'
+
+    [body]='test_fatal() { return 128; }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fatal$CR--- $FatalT${Tab}0ms${Tab}test_fatal
+=== $RunT$Tab$Tab${Tab}test_ok$CR--- $PassT${Tab}0ms${Tab}test_ok
+$FailT$Tab${Tab}0ms
+1/2"
+  )
+
+  local -A case2=(
+    [name]='fatal subtest fails the overall verdict'
+
+    [body]='test_fatal() { local -A c=([name]=x); subtest() { return 128; }; tesht.Run c; }'
+    [want]="=== $RunT$Tab$Tab${Tab}test_fatal/x$CR--- $FatalT${Tab}0ms$Tab${YellowT}test_fatal/x$ResetT
+=== $RunT$Tab$Tab${Tab}test_ok$CR--- $PassT${Tab}0ms${Tab}test_ok
+$FailT$Tab${Tab}0ms
+1/2"
+  )
+
+  subtest() {
+    local casename=$1
+
+    ## arrange
+    UnixMilliFuncT=mockUnixMilli
+    eval "$(tesht.Inherit $casename)"
+
+    local dir
+    tesht.MktempDir dir || return 128
+    cd $dir
+    echoLines "$body" 'test_ok() { :; }' >fatal_test.bash
+
+    ## act
+    local got rc
+    got=$(tesht.Main '' fatal_test.bash) && rc=$? || rc=$?
+
+    ## assert
+    tesht.Softly <<'    END'
+      tesht.AssertGot "$got" "$want"
+      tesht.AssertRC $rc 1
+    END
+  }
+
+  tesht.Run ${!case@}
+}
+
 # test_AssertGot tests that AssertGot identifies whether two inputs are equal.
 test_AssertGot() {
   local -A case1=(

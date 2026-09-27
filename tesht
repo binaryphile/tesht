@@ -472,8 +472,8 @@ tesht.test() {
     # Propagate subtest failure to caller's `failed` (#25287). Without this,
     # subtest FAIL markers reach stdout but tesht.Main reports overall PASS
     # and exits 0 — same silent-pass class as the assertion-fail-flag bug.
-    (( rc == 128 )) && return 128
     (( rc != 0 )) && failed=1
+    (( rc == 128 )) && return 128
     return
   else
     TestCountT+=1
@@ -485,7 +485,7 @@ tesht.test() {
       printf $columns $PassT $duration $testname
       PassCountT+=1
       ;;
-    128 ) printf $columns $FatalT $duration $testname; return 128;;
+    128 ) printf $columns $FatalT $duration $testname; failed=1; return 128;;
     *   ) printf $columns $FailT $duration $YellowT$testname$ResetT; failed=1;;
   esac
 }

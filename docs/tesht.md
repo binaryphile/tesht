@@ -213,6 +213,9 @@ Subtest failures inside `tesht.Run` are also propagated to tesht's overall
 exit code (previously the subtest's FAIL marker reached stdout but the runner
 still reported overall PASS / exit 0).
 
+A test or subtest that returns 128 is reported FATAL and fails the overall
+verdict: the summary line reads FAIL and `tesht` exits 1.
+
 ## Retry middleware
 
 `tesht.Retry` wraps any command in a retry loop. Options precede the command;
