@@ -29,11 +29,10 @@ Usage:
 
   Options:
 
-    -run REGEXP         filter test names by bash native regex (=~)
-                        (equals-syntax variant: -run=REGEXP)
+    --run REGEXP        filter test names by bash native regex (=~)
+                        (also --run=REGEXP; empty regex matches all tests)
     -j N | --jobs N     run up to N tests concurrently within each file
-                        (default: 1 = serial; bare -j uses \$(nproc))
-                        (equals-syntax variant: -j=N)
+                        (also -jN and --jobs=N; default: 1 = serial)
     -h | --help         show this message and exit
     -x | --trace        enable debug tracing
     --                  stop option processing
@@ -50,14 +49,14 @@ Usage:
     $Prog my_test.bash                 # run tests in one file
     $Prog foo_test.bash bar_test.bash  # multiple files
     $Prog scripts/                     # all *_test.bash in scripts/ (shallow)
-    $Prog -run TestMyFunction          # filter by name regex (any file)
-    $Prog my_test.bash -run TestFoo    # file + name filter
-    $Prog -run=TestFoo my_test.bash    # equals-syntax variant
+    $Prog --run TestMyFunction         # filter by name regex (any file)
+    $Prog my_test.bash --run TestFoo   # file + name filter
+    $Prog --run=TestFoo my_test.bash   # equals-syntax variant
     $Prog -j 4 my_test.bash            # run 4 tests in parallel within the file
-    $Prog -j                           # bare form: parallel at \$(nproc) workers
+    $Prog -j "\$(nproc)"                # one worker per CPU
 
-  Matches Go's go-test convention: positional args are files; -run
-  REGEXP filters test names. Empty regex matches all tests.
+  Options follow POSIX/GNU syntax and may appear before or after FILE
+  arguments.
 END
 
 GreenT=$'\033[38;5;82m'
