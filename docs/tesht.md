@@ -18,11 +18,11 @@ tesht                              # run all test_* in *_test.bash files in cwd
 tesht my_test.bash                 # run tests in one file
 tesht foo_test.bash bar_test.bash  # multiple files
 tesht scripts/                     # all *_test.bash in scripts/ (shallow)
-tesht -run TestMyFunction          # filter test names by regex (any file)
-tesht my_test.bash -run TestFoo    # file + name filter
-tesht -run=TestFoo my_test.bash    # equals-syntax variant
+tesht --run TestMyFunction         # filter test names by regex (any file)
+tesht my_test.bash --run TestFoo   # file + name filter
+tesht --run=TestFoo my_test.bash   # equals-syntax variant
 tesht -j 4 my_test.bash            # run up to 4 tests concurrently within the file
-tesht -j                           # bare -j: concurrency = $(nproc)
+tesht -j "$(nproc)"                # one worker per CPU
 tesht -x                           # trace mode for debugging
 ```
 
@@ -32,15 +32,23 @@ including the test file's own body, print fully-expanded argv to stderr.
 Don't pipe/log traced output somewhere persistent or credential-shaped
 argv can leak. Full warning: README.md.
 
-Positional args are test files or directories; `-run REGEXP` filters test names via bash native regex (`=~`). Empty regex matches every test. The `-run` flag accepts both `-run REGEXP` (space-separated) and `-run=REGEXP` (equals-syntax) forms. Matches Go's `go test [-run regexp] [files]` shape.
+Positional args are test files or directories; `--run REGEXP` filters test names via bash native regex (`=~`). Empty regex matches every test. The flag accepts both `--run REGEXP` and `--run=REGEXP`. Options use POSIX/GNU syntax and may come before or after the files.
+
+**Changed flags.** The Go-style spellings are no longer accepted and exit 2 with a pointer to the replacement:
+
+| Old | Use instead |
+|---|---|
+| `-run REGEXP`, `-run=REGEXP` | `--run REGEXP`, `--run=REGEXP` |
+| bare `-j` (meaning all CPUs) | `-j "$(nproc)"` |
+| `-j=N` | `-j N`, `-jN`, `--jobs N` or `--jobs=N` |
 
 Directory args expand to `*_test.bash` files at one level deep (shallow; non-recursive). An empty directory errors. For nested test trees, pass an explicit glob (e.g. `tesht path/**/*_test.bash` with `shopt -s globstar`); built-in recursive discovery is deferred until a real use case surfaces.
 
 ## Within-file parallelism: `-j N` (#37833)
 
-`-j N` (alias `--jobs N`, equals form `-j=N`) runs up to N tests concurrently
-**within each file**. Default (`-j` absent or `-j 1`) is serial — identical
-behavior to before. Bare `-j` (no integer) sets N to `$(nproc)`.
+`-j N` (also `-jN`, `--jobs N`, `--jobs=N`) runs up to N tests concurrently
+**within each file**. N is required. Default (`-j` absent or `-j 1`) is serial.
+For one worker per CPU, pass `-j "$(nproc)"`.
 
 Each test still runs inside its own subshell (per "Subshell isolation"
 below), and each worker captures its own stdout+stderr to a per-test buffer
@@ -61,7 +69,7 @@ Caveats:
 - **Tests must be isolated.** Per-test `tesht.MktempDir` is the standard
   pattern. Tests that mutate shared filesystem state outside a temp dir, or
   that depend on global mutables across tests, may surface flakes under
-  `-j N` that did not appear serial. Run a flaky test under `-run` to
+  `-j N` that did not appear serial. Run a flaky test under `--run` to
   reproduce; fix isolation at the source — do not lower N to hide it.
 - **No cross-test output ordering guarantee during execution.** The parent
   re-serializes output in source-file order after all workers finish, so

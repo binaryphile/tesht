@@ -23,7 +23,7 @@ $FailT$Tab${Tab}0ms
   )
 
   local -A case2=(
-    [name]='-run regex alternation runs two tests and skips a third'
+    [name]='name filter alternation runs two tests and skips a third'
 
     [command]='tesht.Main "test_success|test_failure" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
@@ -42,7 +42,7 @@ $FailT$Tab${Tab}0ms
   )
 
   local -A case4=(
-    [name]='-run anchored regex runs only exact match'
+    [name]='anchored name filter runs only exact match'
 
     [command]='tesht.Main "^test_success\$" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
@@ -51,7 +51,7 @@ $PassT$Tab${Tab}0ms
   )
 
   local -A case5=(
-    [name]='-run substring (unanchored) matches multiple by partial name'
+    [name]='unanchored name filter matches by partial name'
 
     [command]='tesht.Main "succ" dummy_test.bash'
     [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
@@ -507,30 +507,42 @@ test_cli_multiple_positional_files() {
   tesht.AssertRC $rc 0
 }
 
-# test_cli_run_flag_subprocess verifies -run REGEXP and -run=REGEXP forms filter test names.
-test_cli_run_flag_subprocess() {
-  local dir
-  tesht.MktempDir dir || return 128
-  cd $dir
-  echoLines "test_one() { :; }" "test_two() { :; }" >dummy_test.bash
+# test_cli_obsoleteFlags_rejected verifies the removed Go-style spellings (-run,
+# -run=, bare -j, -j=N) and malformed -j/--jobs/--run values exit 2 with a message
+# naming the problem, before any test runs.
+test_cli_obsoleteFlags_rejected() {
+  local -A case1=([name]='-run REGEXP'         [args]=$(tesht.ListOf -run test_one dummy_test.bash)   [want]='-run was removed; use --run')  # obsolete-flag-reject-test
+  local -A case2=([name]='-run=REGEXP'         [args]=$(tesht.ListOf -run=test_one dummy_test.bash)   [want]='-run was removed; use --run')  # obsolete-flag-reject-test
+  local -A case3=([name]='bare -j before file' [args]=$(tesht.ListOf -j dummy_test.bash)              [want]='requires a non-negative integer')  # obsolete-flag-reject-test
+  local -A case4=([name]='-j last'             [args]=$(tesht.ListOf dummy_test.bash -j)              [want]='requires a non-negative integer')  # obsolete-flag-reject-test
+  local -A case5=([name]='-j then flag'        [args]=$(tesht.ListOf -j -x dummy_test.bash)           [want]='requires a non-negative integer')  # obsolete-flag-reject-test
+  local -A case6=([name]='-j=N'                [args]=$(tesht.ListOf -j=4 dummy_test.bash)            [want]='use -j N or --jobs=N')  # obsolete-flag-reject-test
+  local -A case7=([name]='--jobs last'         [args]=$(tesht.ListOf dummy_test.bash --jobs)          [want]='--jobs requires a non-negative integer')
+  local -A case8=([name]='--jobs=abc'          [args]=$(tesht.ListOf --jobs=abc dummy_test.bash)      [want]='--jobs requires a non-negative integer')
+  local -A case9=([name]='--run last'          [args]=$(tesht.ListOf dummy_test.bash --run)           [want]='--run requires a regexp')
+  local -A case10=([name]='--run then --'      [args]=$(tesht.ListOf --run -- dummy_test.bash)        [want]='--run requires a regexp')
 
-  # -run REGEXP (space-separated form)
-  local got
-  got=$($TESHT_PATHT -run test_one dummy_test.bash 2>&1)
-  [[ $got == *test_one* ]] || { tesht.Log "space-form: missing test_one in: $got"; return 1; }
-  [[ $got != *test_two* ]] || { tesht.Log "space-form: test_two should be filtered out: $got"; return 1; }
+  subtest() {
+    local casename=$1
+    eval "$(tesht.Inherit $casename)"
 
-  # -run=REGEXP (equals-syntax form)
-  got=$($TESHT_PATHT -run=test_two dummy_test.bash 2>&1)
-  [[ $got == *test_two* ]] || { tesht.Log "equals-form: missing test_two in: $got"; return 1; }
-  [[ $got != *test_one* ]] || { tesht.Log "equals-form: test_one should be filtered out: $got"; return 1; }
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+    cd $dir
+    echoLines 'test_one() { :; }' >dummy_test.bash
 
-  # Flag-after-positional (interleaved order): regression guard for impl /i pass
-  # finding that the original options-then-positional parser loop broke on the
-  # docs-promised `tesht my_test.bash -run TestFoo` shape.
-  got=$($TESHT_PATHT dummy_test.bash -run test_one 2>&1)
-  [[ $got == *test_one* ]] || { tesht.Log "flag-after-positional: missing test_one in: $got"; return 1; }
-  [[ $got != *test_two* ]] || { tesht.Log "flag-after-positional: test_two should be filtered out: $got"; return 1; }
+    ## act
+    local got_ rc
+    got_=$($TESHT_PATHT $args 2>&1) && rc=$? || rc=$?
+
+    ## assert
+    tesht.AssertRC $rc 2
+    [[ $got_ == *"$want"* ]] || { tesht.Log "expected '$want' in: $got_"; return 1; }
+    [[ $got_ != *test_one* ]] || { tesht.Log "no test should run: $got_"; return 1; }
+  }
+
+  tesht.Run ${!case@}
 }
 
 # test_cli_posixFlags_accepted verifies the POSIX/GNU spellings of the name filter
@@ -544,6 +556,7 @@ test_cli_posixFlags_accepted() {
   local -A case6=([name]='-jN attached'         [args]=$(tesht.ListOf -j4 dummy_test.bash)                 [want]=both)
   local -A case7=([name]='--jobs N'             [args]=$(tesht.ListOf --jobs 4 dummy_test.bash)            [want]=both)
   local -A case8=([name]='--jobs=N'             [args]=$(tesht.ListOf --jobs=4 dummy_test.bash)            [want]=both)
+  local -A case9=([name]='--run after file'     [args]=$(tesht.ListOf dummy_test.bash --run test_one)      [want]=one)
 
   subtest() {
     local casename=$1
@@ -583,7 +596,7 @@ test_cli_non_file_positional_errors() {
   tesht.AssertRC $rc 2
   [[ $got == *"does not look like a test file"* ]] \
     || { tesht.Log "missing 'does not look like a test file' in stderr: $got"; return 1; }
-  [[ $got == *"did you mean: tesht -run test_MyFunc"* ]] \
+  [[ $got == *"did you mean: tesht --run test_MyFunc"* ]] \
     || { tesht.Log "missing 'did you mean: tesht -run' in stderr: $got"; return 1; }
 }
 
@@ -653,7 +666,7 @@ test_cli_positional_directory_and_file() {
   [[ $got == *test_explicit* ]] || { tesht.Log "expected 'test_explicit' in output, got: $got"; return 1; }
 }
 
-# test_cli_positional_directory_with_run_filter verifies -run filters tests discovered from a dir.
+# test_cli_positional_directory_with_run_filter verifies --run filters tests discovered from a dir.
 test_cli_positional_directory_with_run_filter() {
   local dir
   tesht.MktempDir dir || return 128
@@ -661,12 +674,12 @@ test_cli_positional_directory_with_run_filter() {
   mkdir -p sub
   echoLines "test_keep() { :; }" "test_skip() { :; }" >sub/x_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT -run test_keep sub/ 2>&1) && rc=$? || rc=$?
+  local got_ rc
+  got_=$($TESHT_PATHT --run test_keep sub/ 2>&1) && rc=$? || rc=$?
 
   tesht.AssertRC $rc 0
-  [[ $got == *test_keep* ]] || { tesht.Log "expected 'test_keep' in output, got: $got"; return 1; }
-  [[ $got != *test_skip* ]] || { tesht.Log "test_skip should be filtered out, got: $got"; return 1; }
+  [[ $got_ == *test_keep* ]] || { tesht.Log "expected 'test_keep' in output, got: $got_"; return 1; }
+  [[ $got_ != *test_skip* ]] || { tesht.Log "test_skip should be filtered out, got: $got_"; return 1; }
 }
 
 # test_cli_TESHT_TEST_FILE_env_var verifies tesht exports the test file's
@@ -744,14 +757,14 @@ test_assertion_failure_fails_test() {
     echoLines "$body" >dummy_test.bash
 
     ## act
-    local got rc=0
-    got=$($TESHT_PATHT -run "$testname" dummy_test.bash 2>&1) || rc=$?
+    local got_ rc=0
+    got_=$($TESHT_PATHT --run "$testname" dummy_test.bash 2>&1) || rc=$?
 
     ## assert: tesht's overall exit was non-zero AND the test was reported FAIL
     tesht.Softly <<'    END'
-      [[ $rc -ne 0 ]] || { tesht.Log "expected non-zero rc, got rc=$rc; output: $got"; return 1; }
-      [[ $got == *FAIL* ]] || { tesht.Log "expected FAIL marker in output, got: $got"; return 1; }
-      [[ $got == *$testname* ]] || { tesht.Log "expected '$testname' in output, got: $got"; return 1; }
+      [[ $rc -ne 0 ]] || { tesht.Log "expected non-zero rc, got rc=$rc; output: $got_"; return 1; }
+      [[ $got_ == *FAIL* ]] || { tesht.Log "expected FAIL marker in output, got: $got_"; return 1; }
+      [[ $got_ == *$testname* ]] || { tesht.Log "expected '$testname' in output, got: $got_"; return 1; }
     END
   }
 
@@ -952,24 +965,6 @@ test_cli_j_runs_tests_concurrently() {
   tesht.Softly <<'  END'
     tesht.AssertGot "$parallelOut" "4/4"
     [[ $serialOut != 4/4 ]] || { tesht.Log "control: serial run must not rendezvous, got $serialOut"; return 1; }
-  END
-}
-
-# test_cli_j_bare_parses verifies bare `-j` (no integer) is accepted and the
-# next positional arg is still recognized as a file (#37833).
-test_cli_j_bare_parses() {
-  local dir
-  tesht.MktempDir dir || return 128
-  cd $dir
-  echoLines "test_one() { :; }" >dummy_test.bash
-
-  local got rc
-  got=$($TESHT_PATHT -j dummy_test.bash 2>&1) && rc=$? || rc=$?
-
-  tesht.Softly <<'  END'
-    tesht.AssertRC $rc 0
-    [[ $got == *test_one* ]] || { tesht.Log "expected 'test_one' in output, got: $got"; return 1; }
-    [[ $got == *1/1* ]] || { tesht.Log "expected '1/1' in output, got: $got"; return 1; }
   END
 }
 

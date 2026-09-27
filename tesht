@@ -603,27 +603,24 @@ while (( $# )); do
       RunRegexpT=$2; shift 2
       ;;
     --run=*)    RunRegexpT=${1#--run=}; shift;;
-    -run)       shift; RunRegexpT=${1:?-run requires a regexp}; shift;;
-    -run=*)     RunRegexpT=${1#-run=}; shift;;
+    -run|-run=*)  # obsolete-flag-reject-test
+      echo 'error: -run was removed; use --run REGEXP' >&2; exit 2;;  # obsolete-flag-reject-test
+    -j|--jobs)
+      [[ ${2-} =~ ^[0-9]+$ ]] || { echo "error: $1 requires a non-negative integer" >&2; exit 2; }
+      JobsT=$2; shift 2
+      ;;
     -j[0-9]*)
       JobsT=${1#-j}
       [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: -j requires a non-negative integer, got: $JobsT" >&2; exit 2; }
       shift
       ;;
-    -j|--jobs)
-      # Bare `-j` (no integer next) -> nproc. `-j N` consumes N.
-      if [[ ${2:-} =~ ^[0-9]+$ ]]; then
-        JobsT=$2; shift 2
-      else
-        JobsT=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
-        shift
-      fi
-      ;;
-    -j=*|--jobs=*)
-      JobsT=${1#*=}
-      [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: -j requires a non-negative integer, got: $JobsT" >&2; exit 2; }
+    --jobs=*)
+      JobsT=${1#--jobs=}
+      [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: --jobs requires a non-negative integer, got: $JobsT" >&2; exit 2; }
       shift
       ;;
+    -j=*)  # obsolete-flag-reject-test
+      echo 'error: -j=N is not supported; use -j N or --jobs=N' >&2; exit 2;;  # obsolete-flag-reject-test
     --)         shift; FilenamesT+=( "$@" ); break;;
     -*)         echo "error: unknown option: $1" >&2; exit 2;;
     *)          FilenamesT+=( "$1" ); shift;;
@@ -653,7 +650,7 @@ for arg in "${FilenamesT[@]+"${FilenamesT[@]}"}"; do
     echo "error: file not found: $arg" >&2
     exit 2
   else
-    echo "error: '$arg' does not look like a test file or directory; did you mean: $Prog -run $arg, $Prog <dir>, or $Prog <dir>/*_test.bash?" >&2
+    echo "error: '$arg' does not look like a test file or directory; did you mean: $Prog --run $arg, $Prog <dir>, or $Prog <dir>/*_test.bash?" >&2
     exit 2
   fi
 done
