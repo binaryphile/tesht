@@ -599,8 +599,18 @@ while (( $# )); do
   case $1 in
     -h|--help)  echo "$Usage_"; exit;;
     -x|--trace) set -x; shift;;
+    --run)
+      [[ ${2-} != -- ]] && (( $# >= 2 )) || { echo 'error: --run requires a regexp' >&2; exit 2; }
+      RunRegexpT=$2; shift 2
+      ;;
+    --run=*)    RunRegexpT=${1#--run=}; shift;;
     -run)       shift; RunRegexpT=${1:?-run requires a regexp}; shift;;
     -run=*)     RunRegexpT=${1#-run=}; shift;;
+    -j[0-9]*)
+      JobsT=${1#-j}
+      [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: -j requires a non-negative integer, got: $JobsT" >&2; exit 2; }
+      shift
+      ;;
     -j|--jobs)
       # Bare `-j` (no integer next) -> nproc. `-j N` consumes N.
       if [[ ${2:-} =~ ^[0-9]+$ ]]; then

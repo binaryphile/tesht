@@ -533,6 +533,44 @@ test_cli_run_flag_subprocess() {
   [[ $got != *test_two* ]] || { tesht.Log "flag-after-positional: test_two should be filtered out: $got"; return 1; }
 }
 
+# test_cli_posixFlags_accepted verifies the POSIX/GNU spellings of the name filter
+# (--run REGEXP, --run=REGEXP) and the job count (-j N, -jN, --jobs N, --jobs=N).
+test_cli_posixFlags_accepted() {
+  local -A case1=([name]='--run separate'       [args]=$(tesht.ListOf --run test_one dummy_test.bash)      [want]=one)
+  local -A case2=([name]='--run equals'         [args]=$(tesht.ListOf --run=test_one dummy_test.bash)      [want]=one)
+  local -A case3=([name]='--run empty = all'    [args]=$(tesht.ListOf --run= dummy_test.bash)              [want]=both)
+  local -A case4=([name]='--run dash-led value' [args]=$(tesht.ListOf --run '-*test_one' dummy_test.bash)  [want]=one)
+  local -A case5=([name]='-j N'                 [args]=$(tesht.ListOf -j 4 dummy_test.bash)                [want]=both)
+  local -A case6=([name]='-jN attached'         [args]=$(tesht.ListOf -j4 dummy_test.bash)                 [want]=both)
+  local -A case7=([name]='--jobs N'             [args]=$(tesht.ListOf --jobs 4 dummy_test.bash)            [want]=both)
+  local -A case8=([name]='--jobs=N'             [args]=$(tesht.ListOf --jobs=4 dummy_test.bash)            [want]=both)
+
+  subtest() {
+    local casename=$1
+    eval "$(tesht.Inherit $casename)"
+
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+    cd $dir
+    echoLines 'test_one() { :; }' 'test_two() { :; }' >dummy_test.bash
+
+    ## act
+    local got_ rc
+    got_=$($TESHT_PATHT $args 2>&1) && rc=$? || rc=$?
+
+    ## assert
+    tesht.AssertRC $rc 0
+    [[ $got_ == *test_one* ]] || { tesht.Log "expected test_one to run: $got_"; return 1; }
+    case $want in
+      one  ) [[ $got_ != *test_two* ]] || { tesht.Log "expected test_two filtered out: $got_"; return 1; };;
+      both ) [[ $got_ == *test_two* ]] || { tesht.Log "expected test_two to run: $got_"; return 1; };;
+    esac
+  }
+
+  tesht.Run ${!case@}
+}
+
 # test_cli_non_file_positional_errors verifies the inverted guard catches test-name-style positionals.
 test_cli_non_file_positional_errors() {
   local dir
