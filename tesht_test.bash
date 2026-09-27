@@ -881,37 +881,40 @@ test_cli_j_parallel_isolation() {
   END
 }
 
-# test_cli_j_parallel_speedup verifies -j N is materially faster than serial
-# on parallelizable tests. Threshold: parallel < 2/3 * serial (a 4-test
-# 0.3s-sleep fan-out under -j 4 typically lands at ~0.4s vs ~1.2s serial).
-test_cli_j_parallel_speedup() {
+# test_cli_j_runs_tests_concurrently verifies -j N runs a file's tests at the
+# same time. Each fixture test marks itself started, then waits for all four
+# marks: that rendezvous completes only if the tests overlap, however loaded
+# the host is. The serial run is the control: there the first test waits
+# alone, so it must fail.
+test_cli_j_runs_tests_concurrently() {
   local dir
   tesht.MktempDir dir || return 128
   cd $dir
 
-  echoLines \
-    'test_s1() { sleep 0.3; }' \
-    'test_s2() { sleep 0.3; }' \
-    'test_s3() { sleep 0.3; }' \
-    'test_s4() { sleep 0.3; }' \
-    >slow_test.bash
-
-  local startSerialMs endSerialMs startParMs endParMs
-  startSerialMs=$(tesht.UnixMilli)
-  $TESHT_PATHT slow_test.bash >/dev/null 2>&1
-  endSerialMs=$(tesht.UnixMilli)
-
-  startParMs=$(tesht.UnixMilli)
-  $TESHT_PATHT -j 4 slow_test.bash >/dev/null 2>&1
-  endParMs=$(tesht.UnixMilli)
-
-  local -i serialMs=$(( endSerialMs - startSerialMs ))
-  local -i parMs=$(( endParMs - startParMs ))
-
-  (( parMs * 3 < serialMs * 2 )) || {
-    tesht.Log "expected parallel measurably faster: serial=${serialMs}ms parallel=${parMs}ms"
+  local test
+  for test in s1 s2 s3 s4; do
+    echo "test_$test() { touch \$BarrierDir/$test; barrierWait; }"
+  done >barrier_test.bash
+  cat >>barrier_test.bash <<'  END'
+  barrierWait() {
+    local -i try
+    for (( try = 0; try < BarrierTries; try++ )); do
+      [[ -e $BarrierDir/s1 && -e $BarrierDir/s2 && -e $BarrierDir/s3 && -e $BarrierDir/s4 ]] && return 0
+      sleep 0.1
+    done
     return 1
   }
+  END
+
+  local parallelOut serialOut
+  mkdir par ser
+  parallelOut=$(BarrierDir=$dir/par BarrierTries=100 $TESHT_PATHT -j 4 barrier_test.bash 2>&1 | tail -1)
+  serialOut=$(BarrierDir=$dir/ser BarrierTries=3 $TESHT_PATHT barrier_test.bash 2>&1 | tail -1)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$parallelOut" "4/4"
+    [[ $serialOut != 4/4 ]] || { tesht.Log "control: serial run must not rendezvous, got $serialOut"; return 1; }
+  END
 }
 
 # test_cli_j_bare_parses verifies bare `-j` (no integer) is accepted and the
