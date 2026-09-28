@@ -521,6 +521,7 @@ test_cli_obsoleteFlags_rejected() {
   local -A case8=([name]='--jobs=abc'          [args]=$(tesht.ListOf --jobs=abc dummy_test.bash)      [want]='--jobs requires a non-negative integer')
   local -A case9=([name]='--run last'          [args]=$(tesht.ListOf dummy_test.bash --run)           [want]='--run requires a regexp')
   local -A case10=([name]='--run then --'      [args]=$(tesht.ListOf --run -- dummy_test.bash)        [want]='--run requires a regexp')
+  local -A case11=([name]='-j non-digit'       [args]=$(tesht.ListOf -jx dummy_test.bash)             [want]='-j requires a non-negative integer, got: x')
 
   subtest() {
     local casename=$1

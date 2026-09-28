@@ -609,7 +609,9 @@ while (( $# )); do
       [[ ${2-} =~ ^[0-9]+$ ]] || { echo "error: $1 requires a non-negative integer" >&2; exit 2; }
       JobsT=$2; shift 2
       ;;
-    -j[0-9]*)
+    -j=*)  # obsolete-flag-reject-test
+      echo 'error: -j=N is not supported; use -j N or --jobs=N' >&2; exit 2;;  # obsolete-flag-reject-test
+    -j?*)
       JobsT=${1#-j}
       [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: -j requires a non-negative integer, got: $JobsT" >&2; exit 2; }
       shift
@@ -619,8 +621,6 @@ while (( $# )); do
       [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: --jobs requires a non-negative integer, got: $JobsT" >&2; exit 2; }
       shift
       ;;
-    -j=*)  # obsolete-flag-reject-test
-      echo 'error: -j=N is not supported; use -j N or --jobs=N' >&2; exit 2;;  # obsolete-flag-reject-test
     --)         shift; FilenamesT+=( "$@" ); break;;
     -*)         echo "error: unknown option: $1" >&2; exit 2;;
     *)          FilenamesT+=( "$1" ); shift;;
