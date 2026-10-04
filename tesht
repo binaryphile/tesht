@@ -58,6 +58,10 @@ Usage:
 
   Options follow POSIX/GNU syntax and may appear before or after FILE
   arguments.
+
+  Environment:
+
+    TESHT_NO_SKIP=1     run tests that call tesht.Skip instead of skipping them
 END
 
 GreenT=$'\033[38;5;82m'
