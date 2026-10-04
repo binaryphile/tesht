@@ -1,4 +1,7 @@
 # Because we are being run by tesht, it is already loaded and doesn't need to be sourced.
+IFS=$'\n'
+set -o noglob
+
 NL=$'\n'
 CR=$'\r'
 Tab=$'\t'
@@ -6,7 +9,7 @@ Tab=$'\t'
 # Path to the tesht script under test. Captured at source time before any test cd's away.
 TESHT_PATHT=$(realpath -- "${BASH_SOURCE%/*}/tesht")
 
-# deterministic mock for time
+# mockUnixMilli is a deterministic clock for tests: it always reports 0.
 mockUnixMilli() { return 0; }
 
 # test_Main tests that Main finds a test file executes it.
@@ -14,8 +17,8 @@ test_Main() {
   local -A case1=(
     [name]='run passing and failing tests from a file'
 
-    [command]='tesht.Main "" dummy_test.bash'
-    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+    [commandLines]='tesht.Main "" dummy_test.bash'
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_failure$ResetT
 === $RunT$Tab$Tab${Tab}test_thirdWheel$CR--- $PassT${Tab}0ms${Tab}test_thirdWheel
 $FailT$Tab${Tab}0ms
@@ -25,8 +28,8 @@ $FailT$Tab${Tab}0ms
   local -A case2=(
     [name]='name filter alternation runs two tests and skips a third'
 
-    [command]='tesht.Main "test_success|test_failure" dummy_test.bash'
-    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+    [commandLines]='tesht.Main "test_success|test_failure" dummy_test.bash'
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 === $RunT$Tab$Tab${Tab}test_failure$CR--- $FailT${Tab}0ms$Tab${YellowT}test_failure$ResetT
 $FailT$Tab${Tab}0ms
 1/2"
@@ -35,8 +38,8 @@ $FailT$Tab${Tab}0ms
   local -A case3=(
     [name]='report FAIL and exit 2 when no tests match filter'
 
-    [command]='tesht.Main "test_nonexistent" dummy_test.bash'
-    [want]="${FailT}${Tab}${Tab}0ms
+    [commandLines]='tesht.Main "test_nonexistent" dummy_test.bash'
+    [wantLines]="${FailT}${Tab}${Tab}0ms
 0/0"
     [wantrc]=2
   )
@@ -44,8 +47,8 @@ $FailT$Tab${Tab}0ms
   local -A case4=(
     [name]='anchored name filter runs only exact match'
 
-    [command]='tesht.Main "^test_success\$" dummy_test.bash'
-    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+    [commandLines]='tesht.Main "^test_success\$" dummy_test.bash'
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 $PassT$Tab${Tab}0ms
 1/1"
   )
@@ -53,8 +56,8 @@ $PassT$Tab${Tab}0ms
   local -A case5=(
     [name]='unanchored name filter matches by partial name'
 
-    [command]='tesht.Main "succ" dummy_test.bash'
-    [want]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
+    [commandLines]='tesht.Main "succ" dummy_test.bash'
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_success$CR--- $PassT${Tab}0ms${Tab}test_success
 $PassT$Tab${Tab}0ms
 1/1"
   )
@@ -73,18 +76,18 @@ $PassT$Tab${Tab}0ms
     cd $dir
 
     # test file
-    echoLines "test_success() { :; }" \
-      "test_failure() { return 1; }" \
-      "test_thirdWheel() { :; }" \
+    echoLines 'test_success() { :; }' \
+      'test_failure() { return 1; }' \
+      'test_thirdWheel() { :; }' \
       >dummy_test.bash
 
     ## act
-    local got rc
-    got=$(eval "$command") && rc=$? || rc=$?
+    local gotLines rc
+    gotLines=$(eval "$commandLines") && rc=$? || rc=$?
 
     ## assert
     tesht.Softly <<'    END'
-      tesht.AssertGot "$got" "$want"
+      tesht.AssertGot "$gotLines" "$wantLines"
       [[ -z ${wantrc:-} ]] || tesht.AssertRC $rc $wantrc
     END
   }
@@ -97,8 +100,8 @@ test_MainFatal() {
   local -A case1=(
     [name]='fatal test fails the overall verdict'
 
-    [body]='test_fatal() { return 128; }'
-    [want]="=== $RunT$Tab$Tab${Tab}test_fatal$CR--- $FatalT${Tab}0ms${Tab}test_fatal
+    [bodyLines]='test_fatal() { return 128; }'
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_fatal$CR--- $FatalT${Tab}0ms${Tab}test_fatal
 === $RunT$Tab$Tab${Tab}test_ok$CR--- $PassT${Tab}0ms${Tab}test_ok
 $FailT$Tab${Tab}0ms
 1/2"
@@ -107,8 +110,8 @@ $FailT$Tab${Tab}0ms
   local -A case2=(
     [name]='fatal subtest fails the overall verdict'
 
-    [body]='test_fatal() { local -A c=([name]=x); subtest() { return 128; }; tesht.Run c; }'
-    [want]="=== $RunT$Tab$Tab${Tab}test_fatal/x$CR--- $FatalT${Tab}0ms$Tab${YellowT}test_fatal/x$ResetT
+    [bodyLines]='test_fatal() { local -A c=([name]=x); subtest() { return 128; }; tesht.Run c; }'
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_fatal/x$CR--- $FatalT${Tab}0ms$Tab${YellowT}test_fatal/x$ResetT
 === $RunT$Tab$Tab${Tab}test_ok$CR--- $PassT${Tab}0ms${Tab}test_ok
 $FailT$Tab${Tab}0ms
 1/2"
@@ -124,15 +127,15 @@ $FailT$Tab${Tab}0ms
     local dir
     tesht.MktempDir dir || return 128
     cd $dir
-    echoLines "$body" 'test_ok() { :; }' >fatal_test.bash
+    echoLines "$bodyLines" 'test_ok() { :; }' >fatal_test.bash
 
     ## act
-    local got rc
-    got=$(tesht.Main '' fatal_test.bash) && rc=$? || rc=$?
+    local gotLines rc
+    gotLines=$(tesht.Main '' fatal_test.bash) && rc=$? || rc=$?
 
     ## assert
     tesht.Softly <<'    END'
-      tesht.AssertGot "$got" "$want"
+      tesht.AssertGot "$gotLines" "$wantLines"
       tesht.AssertRC $rc 1
     END
   }
@@ -145,16 +148,16 @@ test_AssertGot() {
   local -A case1=(
     [name]='return 0 and no output if inputs match'
 
-    [command]='tesht.AssertGot match match'
-    [want]=''
+    [commandLines]='tesht.AssertGot match match'
+    [wantLines]=''
     [wantrc]=0
   )
 
   local -A case2=(
     [name]='return 1 and show a diff if inputs do not match'
 
-    [command]='tesht.AssertGot no match'
-    [want]=$'\n\ngot does not match want:\n< no\n---\n> match\n\nuse this line to update want to match:\n    want=\'no\''
+    [commandLines]='tesht.AssertGot no match'
+    [wantLines]=$'\n\ngot does not match want:\n< no\n---\n> match\n\nuse this line to update want to match:\n    want=\'no\''
     [wantrc]=1
   )
 
@@ -166,13 +169,13 @@ test_AssertGot() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got # can't combine with below when getting rc
-    got=$(eval "$command") && local rc=$? || local rc=$?
+    local gotLines # can't combine with below when getting rc
+    gotLines=$(eval "$commandLines") && local rc=$? || local rc=$?
 
     ## assert
     tesht.Softly <<'    END'
       tesht.AssertRC $rc $wantrc
-      tesht.AssertGot "$got" "$want"
+      tesht.AssertGot "$gotLines" "$wantLines"
     END
   }
 
@@ -184,16 +187,16 @@ test_AssertRC() {
   local -A case1=(
     [name]='return 0 and no output if inputs match'
 
-    [command]='tesht.AssertRC 1 1'
-    [want]=''
+    [commandLines]='tesht.AssertRC 1 1'
+    [wantLines]=''
     [wantrc]=0
   )
 
   local -A case2=(
     [name]='return 1 and show an error message if inputs do not match'
 
-    [command]='tesht.AssertRC 0 1'
-    [want]=$'\n\nerror: rc = 0, want: 1'
+    [commandLines]='tesht.AssertRC 0 1'
+    [wantLines]=$'\n\nerror: rc = 0, want: 1'
     [wantrc]=1
   )
 
@@ -205,13 +208,13 @@ test_AssertRC() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got rc # can't combine with below when getting rc
-    got=$(eval "$command") && rc=$? || rc=$?
+    local gotLines rc # can't combine with below when getting rc
+    gotLines=$(eval "$commandLines") && rc=$? || rc=$?
 
     ## assert
     tesht.Softly <<'    END'
       tesht.AssertRC $rc $wantrc
-      tesht.AssertGot "$got" "$want"
+      tesht.AssertGot "$gotLines" "$wantLines"
     END
   }
 
@@ -223,32 +226,32 @@ test_Smoke() {
   local -A case1=(
     [name]='return 0 and no output when expected rc matches actual'
 
-    [command]='tesht.Smoke 0 true'
-    [want]=''
+    [commandLines]='tesht.Smoke 0 true'
+    [wantLines]=''
     [wantrc]=0
   )
 
   local -A case2=(
     [name]='return 0 when an intentionally-failing command matches expected nonzero rc'
 
-    [command]='tesht.Smoke 1 false'
-    [want]=''
+    [commandLines]='tesht.Smoke 1 false'
+    [wantLines]=''
     [wantrc]=0
   )
 
   local -A case3=(
     [name]='return 1 and report the mismatch when actual rc differs from expected'
 
-    [command]='tesht.Smoke 0 false'
-    [want]=$'\n\nFAIL: expected rc=0, got rc=1 from: false\n\n\n  output: '
+    [commandLines]='tesht.Smoke 0 false'
+    [wantLines]=$'\n\nFAIL: expected rc=0, got rc=1 from: false\n\n\n  output: '
     [wantrc]=1
   )
 
   local -A case4=(
     [name]='accept optional -- separator before the command'
 
-    [command]='tesht.Smoke 0 -- true'
-    [want]=''
+    [commandLines]='tesht.Smoke 0 -- true'
+    [wantLines]=''
     [wantrc]=0
   )
 
@@ -260,13 +263,13 @@ test_Smoke() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got rc # can't combine with below when getting rc
-    got=$(eval "$command") && rc=$? || rc=$?
+    local gotLines rc # can't combine with below when getting rc
+    gotLines=$(eval "$commandLines") && rc=$? || rc=$?
 
     ## assert
     tesht.Softly <<'    END'
       tesht.AssertRC $rc $wantrc
-      tesht.AssertGot "$got" "$want"
+      tesht.AssertGot "$gotLines" "$wantLines"
     END
   }
 
@@ -278,29 +281,29 @@ test_ListOf() {
   local -A case1=(
     [name]='no arguments returns empty string'
 
-    [command]='tesht.ListOf'
-    [want]=''
+    [commandLines]='tesht.ListOf'
+    [wantLines]=''
   )
 
   local -A case2=(
     [name]='single argument returns the argument'
 
-    [command]='tesht.ListOf "hello"'
-    [want]='hello'
+    [commandLines]='tesht.ListOf "hello"'
+    [wantLines]='hello'
   )
 
   local -A case3=(
     [name]='multiple arguments joined with newlines'
 
-    [command]='tesht.ListOf "first" "second" "third"'
-    [want]=$'first\nsecond\nthird'
+    [commandLines]='tesht.ListOf "first" "second" "third"'
+    [wantLines]=$'first\nsecond\nthird'
   )
 
   local -A case4=(
     [name]='handles arguments with spaces'
 
-    [command]='tesht.ListOf "hello world" "foo bar"'
-    [want]=$'hello world\nfoo bar'
+    [commandLines]='tesht.ListOf "hello world" "foo bar"'
+    [wantLines]=$'hello world\nfoo bar'
   )
 
   subtest() {
@@ -310,10 +313,10 @@ test_ListOf() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got=$(eval "$command")
+    local gotLines=$(eval "$commandLines")
 
     ## assert
-    tesht.AssertGot "$got" "$want"
+    tesht.AssertGot "$gotLines" "$wantLines"
   }
 
   tesht.Run ${!case@}
@@ -325,29 +328,29 @@ test_declareVar() {
   local -A case1=(
     [name]='plural name with array-shaped value declares an array'
 
-    [command]='tesht.declareVar names "(a b c)"'
-    [want]="declare -a names='(a b c)'"
+    [commandLines]='tesht.declareVar names "(a b c)"'
+    [wantLines]="declare -a names='(a b c)'"
   )
 
   local -A case2=(
     [name]='name ending in s but scalar value declares a scalar, not an array'
 
-    [command]='tesht.declareVar showStatus foo'
-    [want]="declare showStatus='foo'"
+    [commandLines]='tesht.declareVar showStatus foo'
+    [wantLines]="declare showStatus='foo'"
   )
 
   local -A case3=(
     [name]='trailing-underscore name with array-shaped value declares an array'
 
-    [command]='tesht.declareVar names_ "(a b)"'
-    [want]="declare -a names_='(a b)'"
+    [commandLines]='tesht.declareVar names_ "(a b)"'
+    [wantLines]="declare -a names_='(a b)'"
   )
 
   local -A case4=(
     [name]='ordinary scalar name and value declares a scalar'
 
-    [command]='tesht.declareVar name foo'
-    [want]="declare name='foo'"
+    [commandLines]='tesht.declareVar name foo'
+    [wantLines]="declare name='foo'"
   )
 
   subtest() {
@@ -357,10 +360,10 @@ test_declareVar() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got=$(eval "$command")
+    local gotLines=$(eval "$commandLines")
 
     ## assert
-    tesht.AssertGot "$got" "$want"
+    tesht.AssertGot "$gotLines" "$wantLines"
   }
 
   tesht.Run ${!case@}
@@ -372,14 +375,14 @@ test_Inherit() {
   local -A map=([values]='( 0 1 )')
 
   ## act
-  local got rc
+  local gotLines rc
   eval "$(tesht.Inherit map)" && rc=$? || rc=$?
-  got=$(declare -p values)
+  gotLines=$(declare -p values)
 
   ## assert
   tesht.Softly <<'  END'
     tesht.AssertRC $rc 0
-    tesht.AssertGot "$got" 'declare -a values=([0]="0" [1]="1")'
+    tesht.AssertGot "$gotLines" 'declare -a values=([0]="0" [1]="1")'
   END
 }
 
@@ -388,25 +391,25 @@ test_test() {
   local -A case1=(
     [name]='report a failing subtest'
 
-    [command]='tesht.test "$testSource" test_fail'
+    [commandLines]='tesht.test "$testSource" test_fail'
     [testSource]='test_fail() {
       local -A case=([name]=slug)
       subtest() { return 1; }
       tesht.Run case
     }'
-    [want]="=== $RunT$Tab$Tab${Tab}test_fail/slug$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail/slug$ResetT"
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_fail/slug$CR--- $FailT${Tab}0ms${Tab}${YellowT}test_fail/slug$ResetT"
   )
 
   local -A case2=(
     [name]='report a fatal subtest'
 
-    [command]='tesht.test "$testSource" test_fatal'
+    [commandLines]='tesht.test "$testSource" test_fatal'
     [testSource]='test_fatal() {
       local -A case=([name]=slug)
       subtest() { return 128; }
       tesht.Run case
     }'
-    [want]="=== $RunT$Tab$Tab${Tab}test_fatal/slug$CR--- $FatalT${Tab}0ms${Tab}${YellowT}test_fatal/slug$ResetT"
+    [wantLines]="=== $RunT$Tab$Tab${Tab}test_fatal/slug$CR--- $FatalT${Tab}0ms${Tab}${YellowT}test_fatal/slug$ResetT"
   )
 
   subtest() {
@@ -417,11 +420,11 @@ test_test() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got rc
-    got=$(eval "$command") && rc=$? || rc=$?
+    local gotLines rc
+    gotLines=$(eval "$commandLines") && rc=$? || rc=$?
 
     ## assert
-    tesht.AssertGot "$got" "$want"
+    tesht.AssertGot "$gotLines" "$wantLines"
   }
 
   tesht.Run ${!case@}
@@ -437,20 +440,20 @@ test_StartHttpServer() {
   cd $dir
 
   # Create a test file for the server to serve
-  echo "test content" >index.html
+  echo 'test content' >index.html
 
-  local pid
+  local -i pid
   pid=$(tesht.StartHttpServer 8080) || return 128   # fatal if can't start server
   tesht.Defer "kill $pid"
 
   ## act
-  local got rc
-  got=$(curl -fsSL http://localhost:8080/index.html) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$(curl -fsSL http://localhost:8080/index.html) && rc=$? || rc=$?
 
   ## assert
   tesht.Softly <<'  END'
     tesht.AssertRC $rc 0
-    tesht.AssertGot "$got" "test content"
+    tesht.AssertGot "$gotLines" "test content"
   END
 }
 
@@ -459,13 +462,13 @@ test_cli_positional_file() {
   local dir
   tesht.MktempDir dir || return 128
   cd $dir
-  echoLines "test_one() { :; }" >dummy_test.bash
+  echoLines 'test_one() { :; }' >dummy_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT dummy_test.bash 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT dummy_test.bash 2>&1) && rc=$? || rc=$?
 
-  [[ $got == *test_one* ]] || { tesht.Log "expected 'test_one' in output, got: $got"; return 1; }
-  [[ $got == *PASS* ]] || { tesht.Log "expected 'PASS' marker in output, got: $got"; return 1; }
+  [[ $gotLines == *test_one* ]] || { tesht.Log "expected 'test_one' in output, got: $gotLines"; return 1; }
+  [[ $gotLines == *PASS* ]] || { tesht.Log "expected 'PASS' marker in output, got: $gotLines"; return 1; }
   tesht.AssertRC $rc 0
 }
 
@@ -484,10 +487,10 @@ test_Defer_failingCommandDoesNotCorruptVerdict() {
     '}' \
     >defer_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT defer_test.bash 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT defer_test.bash 2>&1) && rc=$? || rc=$?
 
-  [[ $got == *PASS* ]] || { tesht.Log "expected 'PASS' despite failing Defer, got: $got"; return 1; }
+  [[ $gotLines == *PASS* ]] || { tesht.Log "expected 'PASS' despite failing Defer, got: $gotLines"; return 1; }
   tesht.AssertRC $rc 0
 }
 
@@ -496,14 +499,14 @@ test_cli_multiple_positional_files() {
   local dir
   tesht.MktempDir dir || return 128
   cd $dir
-  echoLines "test_foo() { :; }" >foo_test.bash
-  echoLines "test_bar() { :; }" >bar_test.bash
+  echoLines 'test_foo() { :; }' >foo_test.bash
+  echoLines 'test_bar() { :; }' >bar_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT foo_test.bash bar_test.bash 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT foo_test.bash bar_test.bash 2>&1) && rc=$? || rc=$?
 
-  [[ $got == *test_foo* ]] || { tesht.Log "expected 'test_foo' in output, got: $got"; return 1; }
-  [[ $got == *test_bar* ]] || { tesht.Log "expected 'test_bar' in output, got: $got"; return 1; }
+  [[ $gotLines == *test_foo* ]] || { tesht.Log "expected 'test_foo' in output, got: $gotLines"; return 1; }
+  [[ $gotLines == *test_bar* ]] || { tesht.Log "expected 'test_bar' in output, got: $gotLines"; return 1; }
   tesht.AssertRC $rc 0
 }
 
@@ -591,14 +594,14 @@ test_cli_non_file_positional_errors() {
   tesht.MktempDir dir || return 128
   cd $dir
 
-  local got rc=0
-  got=$($TESHT_PATHT test_MyFunc 2>&1) || rc=$?
+  local gotLines rc=0
+  gotLines=$($TESHT_PATHT test_MyFunc 2>&1) || rc=$?
 
   tesht.AssertRC $rc 2
-  [[ $got == *"does not look like a test file"* ]] \
-    || { tesht.Log "missing 'does not look like a test file' in stderr: $got"; return 1; }
-  [[ $got == *"did you mean: tesht --run test_MyFunc"* ]] \
-    || { tesht.Log "missing 'did you mean: tesht -run' in stderr: $got"; return 1; }
+  [[ $gotLines == *"does not look like a test file"* ]] \
+    || { tesht.Log "missing 'does not look like a test file' in stderr: $gotLines"; return 1; }
+  [[ $gotLines == *"did you mean: tesht --run test_MyFunc"* ]] \
+    || { tesht.Log "missing 'did you mean: tesht -run' in stderr: $gotLines"; return 1; }
 }
 
 # test_cli_positional_directory verifies a directory arg expands to *_test.bash files (shallow).
@@ -607,15 +610,15 @@ test_cli_positional_directory() {
   tesht.MktempDir dir || return 128
   cd $dir
   mkdir -p sub
-  echoLines "test_a() { :; }" >sub/a_test.bash
-  echoLines "test_b() { :; }" >sub/b_test.bash
+  echoLines 'test_a() { :; }' >sub/a_test.bash
+  echoLines 'test_b() { :; }' >sub/b_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT sub/ 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT sub/ 2>&1) && rc=$? || rc=$?
 
   tesht.AssertRC $rc 0
-  [[ $got == *test_a* ]] || { tesht.Log "expected 'test_a' in output, got: $got"; return 1; }
-  [[ $got == *test_b* ]] || { tesht.Log "expected 'test_b' in output, got: $got"; return 1; }
+  [[ $gotLines == *test_a* ]] || { tesht.Log "expected 'test_a' in output, got: $gotLines"; return 1; }
+  [[ $gotLines == *test_b* ]] || { tesht.Log "expected 'test_b' in output, got: $gotLines"; return 1; }
 }
 
 # test_cli_positional_directory_shallow verifies discovery does NOT recurse.
@@ -624,15 +627,15 @@ test_cli_positional_directory_shallow() {
   tesht.MktempDir dir || return 128
   cd $dir
   mkdir -p sub/nested
-  echoLines "test_top() { :; }" >sub/top_test.bash
-  echoLines "test_deep() { :; }" >sub/nested/deep_test.bash
+  echoLines 'test_top() { :; }' >sub/top_test.bash
+  echoLines 'test_deep() { :; }' >sub/nested/deep_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT sub/ 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT sub/ 2>&1) && rc=$? || rc=$?
 
   tesht.AssertRC $rc 0
-  [[ $got == *test_top* ]] || { tesht.Log "expected 'test_top' in output, got: $got"; return 1; }
-  [[ $got != *test_deep* ]] || { tesht.Log "test_deep should NOT have been discovered (no recursion), got: $got"; return 1; }
+  [[ $gotLines == *test_top* ]] || { tesht.Log "expected 'test_top' in output, got: $gotLines"; return 1; }
+  [[ $gotLines != *test_deep* ]] || { tesht.Log "test_deep should NOT have been discovered (no recursion), got: $gotLines"; return 1; }
 }
 
 # test_cli_positional_directory_empty verifies an empty dir reports a clear error.
@@ -642,12 +645,12 @@ test_cli_positional_directory_empty() {
   cd $dir
   mkdir -p empty
 
-  local got rc=0
-  got=$($TESHT_PATHT empty/ 2>&1) || rc=$?
+  local gotLines rc=0
+  gotLines=$($TESHT_PATHT empty/ 2>&1) || rc=$?
 
   tesht.AssertRC $rc 2
-  [[ $got == *"no *_test.bash files in directory: empty/"* ]] \
-    || { tesht.Log "missing expected empty-dir error in stderr: $got"; return 1; }
+  [[ $gotLines == *"no *_test.bash files in directory: empty/"* ]] \
+    || { tesht.Log "missing expected empty-dir error in stderr: $gotLines"; return 1; }
 }
 
 # test_cli_positional_directory_and_file verifies dir + explicit file both run.
@@ -656,15 +659,15 @@ test_cli_positional_directory_and_file() {
   tesht.MktempDir dir || return 128
   cd $dir
   mkdir -p sub
-  echoLines "test_in_dir() { :; }" >sub/x_test.bash
-  echoLines "test_explicit() { :; }" >other_test.bash
+  echoLines 'test_in_dir() { :; }' >sub/x_test.bash
+  echoLines 'test_explicit() { :; }' >other_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT sub/ other_test.bash 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT sub/ other_test.bash 2>&1) && rc=$? || rc=$?
 
   tesht.AssertRC $rc 0
-  [[ $got == *test_in_dir* ]] || { tesht.Log "expected 'test_in_dir' in output, got: $got"; return 1; }
-  [[ $got == *test_explicit* ]] || { tesht.Log "expected 'test_explicit' in output, got: $got"; return 1; }
+  [[ $gotLines == *test_in_dir* ]] || { tesht.Log "expected 'test_in_dir' in output, got: $gotLines"; return 1; }
+  [[ $gotLines == *test_explicit* ]] || { tesht.Log "expected 'test_explicit' in output, got: $gotLines"; return 1; }
 }
 
 # test_cli_positional_directory_with_run_filter verifies --run filters tests discovered from a dir.
@@ -673,7 +676,7 @@ test_cli_positional_directory_with_run_filter() {
   tesht.MktempDir dir || return 128
   cd $dir
   mkdir -p sub
-  echoLines "test_keep() { :; }" "test_skip() { :; }" >sub/x_test.bash
+  echoLines 'test_keep() { :; }' 'test_skip() { :; }' >sub/x_test.bash
 
   local got_ rc
   got_=$($TESHT_PATHT --run test_keep sub/ 2>&1) && rc=$? || rc=$?
@@ -700,10 +703,10 @@ test_cli_TESHT_TEST_FILE_env_var() {
     '  [[ -f $TESHT_TEST_FILE ]] || { echo "TESHT_TEST_FILE does not exist: $TESHT_TEST_FILE"; return 1; }' \
     '}' >sub/dummy_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT sub/dummy_test.bash 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT sub/dummy_test.bash 2>&1) && rc=$? || rc=$?
 
-  tesht.AssertRC $rc 0 || { tesht.Log "output: $got"; return 1; }
+  tesht.AssertRC $rc 0 || { tesht.Log "output: $gotLines"; return 1; }
 }
 
 # test_assertion_failure_fails_test verifies that a mid-body assertion failure
@@ -714,7 +717,7 @@ test_assertion_failure_fails_test() {
   local -A case1=(
     [name]='non-subtest: mid-body AssertGot failure overrides rc=0 from final cmd'
 
-    [body]='test_silent_fail() {
+    [bodyLines]='test_silent_fail() {
       tesht.AssertGot a b
       :
     }'
@@ -724,7 +727,7 @@ test_assertion_failure_fails_test() {
   local -A case2=(
     [name]='non-subtest: mid-body AssertRC failure overrides rc=0 from final cmd'
 
-    [body]='test_silent_fail_rc() {
+    [bodyLines]='test_silent_fail_rc() {
       tesht.AssertRC 0 1
       :
     }'
@@ -734,7 +737,7 @@ test_assertion_failure_fails_test() {
   local -A case3=(
     [name]='subtest: mid-body AssertGot failure inside tesht.Run subtest fails test'
 
-    [body]='test_silent_fail_sub() {
+    [bodyLines]='test_silent_fail_sub() {
       local -A case=([name]=slug)
       subtest() {
         tesht.AssertGot a b
@@ -755,11 +758,11 @@ test_assertion_failure_fails_test() {
     tesht.MktempDir dir || return 128
     cd $dir
 
-    echoLines "$body" >dummy_test.bash
+    echoLines "$bodyLines" >dummy_test.bash
 
     ## act
     local got_ rc=0
-    got_=$($TESHT_PATHT --run "$testname" dummy_test.bash 2>&1) || rc=$?
+    got_=$($TESHT_PATHT --run $testname dummy_test.bash 2>&1) || rc=$?
 
     ## assert: tesht's overall exit was non-zero AND the test was reported FAIL
     tesht.Softly <<'    END'
@@ -782,59 +785,59 @@ test_assertion_failure_fails_test() {
 test_Retry() {
   local -A case1=(
     [name]='success on first call returns 0 with no output'
-    [command]='tesht.Retry -- true'
+    [commandLines]='tesht.Retry -- true'
     [wantrc]=0
-    [want]=''
+    [wantLines]=''
   )
 
   local -A case2=(
     [name]='on-exhaust warn logs warning and returns 0'
-    [command]='sleep() { :; }; tesht.Retry --attempts 3 --on-exhaust warn -- false 2>&1'
+    [commandLines]='sleep() { :; }; tesht.Retry --attempts 3 --on-exhaust warn -- false 2>&1'
     [wantrc]=0
     [wantSubstr]='warning: tesht.Retry: 3 attempts exhausted: false'
   )
 
   local -A case3=(
     [name]='on-exhaust fail (default) returns 1 with no output'
-    [command]='sleep() { :; }; tesht.Retry --attempts 3 -- false'
+    [commandLines]='sleep() { :; }; tesht.Retry --attempts 3 -- false'
     [wantrc]=1
-    [want]=''
+    [wantLines]=''
   )
 
   local -A case4=(
     [name]='on-exhaust silent returns 0 with no output'
-    [command]='sleep() { :; }; tesht.Retry --attempts 3 --on-exhaust silent -- false'
+    [commandLines]='sleep() { :; }; tesht.Retry --attempts 3 --on-exhaust silent -- false'
     [wantrc]=0
-    [want]=''
+    [wantLines]=''
   )
 
   local -A case5=(
     [name]='attempts the command N times before giving up'
     # Counts attempts via a stub that appends to a file; expects exactly N.
-    [command]='counter=$(mktemp); attempt() { echo x >>"$counter"; return 1; }; sleep() { :; }; tesht.Retry --attempts 4 --on-exhaust silent -- attempt; wc -l <"$counter" | tr -d " "'
+    [commandLines]='counter=$(mktemp); attempt() { echo x >>"$counter"; return 1; }; sleep() { :; }; tesht.Retry --attempts 4 --on-exhaust silent -- attempt; wc -l <"$counter" | tr -d " "'
     [wantrc]=0
-    [want]='4'
+    [wantLines]='4'
   )
 
   local -A case6=(
     [name]='missing command after options errors with rc=2'
-    [command]='tesht.Retry --attempts 2 2>&1'
+    [commandLines]='tesht.Retry --attempts 2 2>&1'
     [wantrc]=2
     [wantSubstr]='missing command after options'
   )
 
   local -A case7=(
     [name]='unknown option errors with rc=2'
-    [command]='tesht.Retry --bogus foo -- true 2>&1'
+    [commandLines]='tesht.Retry --bogus foo -- true 2>&1'
     [wantrc]=2
     [wantSubstr]='unknown option: --bogus'
   )
 
   local -A case8=(
     [name]='accepts trailing command without -- separator'
-    [command]='tesht.Retry --attempts 1 true'
+    [commandLines]='tesht.Retry --attempts 1 true'
     [wantrc]=0
-    [want]=''
+    [wantLines]=''
   )
 
   subtest() {
@@ -843,14 +846,14 @@ test_Retry() {
     eval "$(tesht.Inherit $casename)"
 
     ## act
-    local got rc=0
-    got=$(eval "$command") && rc=$? || rc=$?
+    local gotLines rc=0
+    gotLines=$(eval "$commandLines") && rc=$? || rc=$?
 
     ## assert: rc always; substring opt-in; exact-want opt-in (skipped if wantSubstr set)
     tesht.AssertRC $rc $wantrc || return 1
-    [[ -z $wantSubstr ]] || [[ $got == *"$wantSubstr"* ]] \
-      || { tesht.Log "missing substring '$wantSubstr' in: $got"; return 1; }
-    [[ -n $wantSubstr ]] || tesht.AssertGot "$got" "$want"
+    [[ -z $wantSubstr ]] || [[ $gotLines == *"$wantSubstr"* ]] \
+      || { tesht.Log "missing substring '$wantSubstr' in: $gotLines"; return 1; }
+    [[ -n $wantSubstr ]] || tesht.AssertGot "$gotLines" "$wantLines"
   }
 
   tesht.Run ${!case@}
@@ -871,13 +874,13 @@ test_cli_j_parallel_pass_count() {
     'test_e() { :; }' \
     >many_test.bash
 
-  local serialTail parallelTail
-  serialTail=$($TESHT_PATHT many_test.bash 2>&1 | tail -1)
-  parallelTail=$($TESHT_PATHT -j 4 many_test.bash 2>&1 | tail -1)
+  local serialTail_ parallelTail_
+  serialTail_=$($TESHT_PATHT many_test.bash 2>&1 | tail -1)
+  parallelTail_=$($TESHT_PATHT -j 4 many_test.bash 2>&1 | tail -1)
 
   tesht.Softly <<'  END'
-    tesht.AssertGot "$serialTail" "5/5"
-    tesht.AssertGot "$parallelTail" "5/5"
+    tesht.AssertGot "$serialTail_" "5/5"
+    tesht.AssertGot "$parallelTail_" "5/5"
   END
 }
 
@@ -898,14 +901,14 @@ test_cli_j_parallel_mixed_pass_fail() {
     'test_e() { return 1; }' \
     >mixed_test.bash
 
-  local got rc=0
-  got=$($TESHT_PATHT -j 3 mixed_test.bash 2>&1) || rc=$?
+  local gotLines rc=0
+  gotLines=$($TESHT_PATHT -j 3 mixed_test.bash 2>&1) || rc=$?
 
   tesht.Softly <<'  END'
     tesht.AssertRC $rc 1
-    [[ $got == *3/5* ]] || { tesht.Log "expected '3/5' in output, got: $got"; return 1; }
-    [[ $got == *test_a* ]] || { tesht.Log "expected 'test_a' in output, got: $got"; return 1; }
-    [[ $got == *test_e* ]] || { tesht.Log "expected 'test_e' in output, got: $got"; return 1; }
+    [[ $gotLines == *3/5* ]] || { tesht.Log "expected '3/5' in output, got: $gotLines"; return 1; }
+    [[ $gotLines == *test_a* ]] || { tesht.Log "expected 'test_a' in output, got: $gotLines"; return 1; }
+    [[ $gotLines == *test_e* ]] || { tesht.Log "expected 'test_e' in output, got: $gotLines"; return 1; }
   END
 }
 
@@ -924,12 +927,12 @@ test_cli_j_parallel_isolation() {
     done
   } >rep_test.bash
 
-  local got rc
-  got=$($TESHT_PATHT -j 4 rep_test.bash 2>&1) && rc=$? || rc=$?
+  local gotLines rc
+  gotLines=$($TESHT_PATHT -j 4 rep_test.bash 2>&1) && rc=$? || rc=$?
 
   tesht.Softly <<'  END'
     tesht.AssertRC $rc 0
-    [[ $got == *20/20* ]] || { tesht.Log "expected '20/20' in output, got: $got"; return 1; }
+    [[ $gotLines == *20/20* ]] || { tesht.Log "expected '20/20' in output, got: $gotLines"; return 1; }
   END
 }
 
@@ -958,14 +961,14 @@ test_cli_j_runs_tests_concurrently() {
   }
   END
 
-  local parallelOut serialOut
+  local parallelOut_ serialOut_
   mkdir par ser
-  parallelOut=$(BarrierDir=$dir/par BarrierTries=100 $TESHT_PATHT -j 4 barrier_test.bash 2>&1 | tail -1)
-  serialOut=$(BarrierDir=$dir/ser BarrierTries=3 $TESHT_PATHT barrier_test.bash 2>&1 | tail -1)
+  parallelOut_=$(BarrierDir=$dir/par BarrierTries=100 $TESHT_PATHT -j 4 barrier_test.bash 2>&1 | tail -1)
+  serialOut_=$(BarrierDir=$dir/ser BarrierTries=3 $TESHT_PATHT barrier_test.bash 2>&1 | tail -1)
 
   tesht.Softly <<'  END'
-    tesht.AssertGot "$parallelOut" "4/4"
-    [[ $serialOut != 4/4 ]] || { tesht.Log "control: serial run must not rendezvous, got $serialOut"; return 1; }
+    tesht.AssertGot "$parallelOut_" "4/4"
+    [[ $serialOut_ != 4/4 ]] || { tesht.Log "control: serial run must not rendezvous, got $serialOut_"; return 1; }
   END
 }
 
