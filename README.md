@@ -202,6 +202,7 @@ test_WithMockedCommand() {
 - **`tesht.AssertGot actual expected`** - Compare strings with diff on failure
 - **`tesht.AssertRC actual expected`** - Compare return codes
 - **`tesht.Smoke expected_rc [--] cmd [args...]`** - Run a CLI smoke check; succeed iff actual rc matches expected
+- **`tesht.Skip reason`** - Skip the current test or subtest; reported as SKIP, counted on the result line, never PASS or FAIL
 - **`tesht.Softly`** - Run multiple assertions, continue on failure
 - **`tesht.Log message...`** - Print message from test
 
@@ -252,6 +253,16 @@ argv.
     --- FAIL    3ms test_Calculator/division by zero
     FAIL        6ms
     1/3
+
+A skipped test is left out of the final count and noted on the result line:
+
+    --- SKIP    1ms test_Upload: needs network
+    PASS        9ms     (1 skipped)
+    4/4
+
+Since 0.16, failures that earlier versions let through also count (an
+assertion before or after `tesht.Run`, before `exit 0`, or in a
+`tesht.Defer` cleanup), so a suite that passed before may turn red.
 
 ## Test Isolation
 

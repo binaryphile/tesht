@@ -126,6 +126,7 @@ test_doThing() {
 - `tesht.AssertGot got want` -- compare strings, diff + copy-paste fix line on mismatch
 - `tesht.AssertRC rc want` -- compare return codes
 - `tesht.Smoke expected_rc [--] cmd [args...]` -- run a CLI smoke check; succeed iff actual rc matches expected. Use for ad-hoc CLI checks outside test functions where naive shell chains would propagate an intentional-failure rc as the script's overall exit code.
+- `tesht.Skip reason` -- mark the current test or subtest skipped and stop it (see "Skipping a test")
 - `tesht.Softly <<'END' ... END` -- run multiple assertions, continue on failure
 - `tesht.Run ${!case@}` -- iterate table cases through `subtest`
 - `tesht.Inherit $casename` -- unpack an associative-array case into locals
@@ -223,6 +224,26 @@ still reported overall PASS / exit 0).
 
 A test or subtest that returns 128 is reported FATAL and fails the overall
 verdict: the summary line reads FAIL and `tesht` exits 1.
+
+Since 0.16 a failure also counts when the body later calls `exit 0`, when it
+is recorded before or after `tesht.Run`, or in a `tesht.Defer` cleanup; a test
+whose subtests failed stays FAIL even if its last command succeeds. Suites
+that passed before may turn red on upgrade.
+
+## Skipping a test
+
+`tesht.Skip "reason"` stops the current test or subtest and reports it as
+`--- SKIP <dur> <name>: <reason>`. A skip is neither PASS nor FAIL: it is left
+out of the final `P/T` line, and the result line shows the count, e.g.
+`PASS<TAB><TAB>421ms<TAB>(1 skipped)`. A run in which every test skips passes.
+
+- A failure already recorded in the test wins: it still reports FAIL.
+- Call it from the test's own shell. Inside `$(...)`, after the test's subtests
+  have run, or in a `tesht.Defer` cleanup it is refused with a stderr warning and
+  the test continues (`out=$(probe || tesht.Skip x)` does not skip).
+- `TESHT_NO_SKIP=1` turns every skip into that warning, so skipped tests run.
+- In the reason, runs of three or more dashes print as `--`, so a SKIP line
+  never contains `--- FAIL`.
 
 ## Retry middleware
 
