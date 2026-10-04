@@ -83,7 +83,7 @@ tesht.Main() {
   local -i jobs=${3:-1}
 
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
-  local startTime=$($UnixMilliFuncT)
+  local -i startTime=$($UnixMilliFuncT)
 
   for filename in "${filenames[@]}"; do
     tesht.testFile $filename "$runRegexp" $jobs || failed=1
@@ -91,7 +91,7 @@ tesht.Main() {
 
   (( TestCountT > 0 )) || failed=2
 
-  local endTime=$($UnixMilliFuncT)
+  local -i endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   local columns='%s\t\t%s\n'
@@ -280,10 +280,10 @@ tesht.Retry() {
 
 # tesht.portIsInUse detects whether port is already in use.
 tesht.portIsInUse() {
-  local pid rc
+  local pidList rc
   command -v lsof &>/dev/null && {
-    pid=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
-    (( rc == 0 )) && echo "http server port $port is taken by pid $pid"
+    pidList=$(lsof -tiTCP:$port -sTCP:LISTEN) && rc=$? || rc=$?
+    (( rc == 0 )) && echo "http server port $port is taken by pid $pidList"
     return $rc
   }
 
@@ -327,7 +327,8 @@ tesht.runSubtest() {
   local columns='=== %s\t\t\t%s'
   printf $columns $RunT $testname
 
-  local startTime=$($UnixMilliFuncT) rc
+  local -i startTime=$($UnixMilliFuncT)
+  local rc
   # Reset the per-test fail-flag before each subtest so a prior subtest's
   # assertion failures don't leak into this one (#25287). Set
   # TESHT_FAIL_FLAG_PID to the subtest subshell's BASHPID so helpers called
@@ -338,7 +339,7 @@ tesht.runSubtest() {
   # Override rc=0 to rc=1 if any assertion helper raised the fail-flag inside
   # the subtest body (set -e is suppressed by the && || invocation shape).
   (( rc == 0 )) && [[ -n ${TESHT_FAIL_FLAG:-} && -e $TESHT_FAIL_FLAG ]] && rc=1
-  local endTime=$($UnixMilliFuncT)
+  local -i endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   subtestTestCount+=1   # in caller's scope
@@ -380,7 +381,7 @@ tesht.Smoke() {
 
 # tesht.Softly runs assertions provided on stdin and reports whether any failed.
 tesht.Softly() {
-  local FAILED=0 LINE  # don't mask higher namespaces
+  local FAILED=0 LINE=''  # don't mask higher namespaces
   while IFS='' read -r LINE; do
     eval "$LINE" || FAILED=1
   done
@@ -402,6 +403,7 @@ tesht.StartHttpServer() {
   tesht.portIsInUse $port && return 1
 
   # start the http server, redirect stdout so it doesn't hang
+  local -i pid
   pid=$(python3 -m http.server $port --bind 127.0.0.1 &>/dev/null & echo $!)
   (( pid != 0 )) || { echo 'could not start http server'; return 1; }
 
@@ -420,15 +422,17 @@ tesht.StartHttpServer() {
 tesht.test() {
   local testSource_=$1 testname=$2
 
-  local startTime=$($UnixMilliFuncT)
+  local -i startTime=$($UnixMilliFuncT)
 
-  local tmpname=$(mktemp -u)   # -u doesn't create a file, just a name
+  local tmpname_
+  tmpname_=$(mktemp -u)   # -u doesn't create a file, just a name
   # Per-test fail-flag sentinel (#25287). Assertion helpers touch this file on
   # failure; tesht.test (and tesht.runSubtest for subtests) checks the file
   # after the test body returns to override a misleading rc=0 from set -e
   # being suppressed by the && || invocation shape.
-  local failflag=$(mktemp -u /tmp/tesht.failflag.XXXXXX)
-  export TESHT_FAIL_FLAG=$failflag
+  local failflag_
+  failflag_=$(mktemp -u /tmp/tesht.failflag.XXXXXX)
+  export TESHT_FAIL_FLAG=$failflag_
   local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
   (
     # Scope fail-flag touches to this test's subshell (#25287). Helpers
@@ -449,19 +453,19 @@ tesht.test() {
     # handles the flag per-subtest. Subtests' rc is reflected via the outer
     # subtestPassCount aggregation, so the test-level rc here stays as-is.
     (( hasSubtests )) || { (( rc == 0 )) && [[ -e $TESHT_FAIL_FLAG ]] && rc=1; }
-    (( hasSubtests )) && echo "$subtestTestCount $subtestPassCount" >$tmpname
+    (( hasSubtests )) && echo "$subtestTestCount $subtestPassCount" >$tmpname_
     exit $rc
   ) && rc=$? || rc=$?
-  rm -f "$failflag"
+  rm -f "$failflag_"
   unset TESHT_FAIL_FLAG
 
-  [[ -e $tmpname ]] && {
+  [[ -e $tmpname_ ]] && {
     hasSubtests=1
-    IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname
-    rm -f $tmpname
+    IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname_
+    rm -f "$tmpname_"
   }
 
-  local endTime=$($UnixMilliFuncT)
+  local -i endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   if (( hasSubtests )); then
@@ -544,9 +548,10 @@ tesht.testFile() {
   done
   (( ${#selectedTests[@]} == 0 )) && return 0
 
-  local parDir
-  parDir=$(mktemp -d /tmp/tesht.par.XXXXXX) ||
+  local parDir_
+  parDir_=$(mktemp -d /tmp/tesht.par.XXXXXX) && [[ -n $parDir_ ]] ||
     { echo 'tesht.testFile: could not create parallel-results directory' >&2; return 1; }
+  local parDir=$parDir_
   tesht.Defer "tesht.Retry --attempts 5 --delay 0.2 --on-exhaust warn -- rm -rf -- $parDir"
 
   local -i idx
@@ -582,7 +587,7 @@ tesht.testFile() {
 
 # tesht.UnixMilli returns the current time in Unix time as milliseconds.
 tesht.UnixMilli() {
-  local whole fraction
+  local whole='' fraction=''
   # EPOCHREALTIME reports second fractions to nano precision
   IFS=. read -r whole fraction <<<$EPOCHREALTIME
   echo "$whole${fraction:0:3}"
@@ -591,7 +596,7 @@ tesht.UnixMilli() {
 # Parse command-line options + positionals. Flags can interleave with positional
 # args; the loop classifies each arg per turn. `--` terminates flag parsing
 # (everything after is positional, including args that start with `-`).
-RunRegexpT=""
+RunRegexpT=''
 FilenamesT=()
 JobsT=1
 while (( $# )); do
@@ -661,7 +666,7 @@ if (( ${#FilenamesT[@]} == 0 )); then
   shopt -s nullglob
   FilenamesT=( *_test.bash )
   shopt -u nullglob
-  (( ${#FilenamesT[@]} == 0 )) && { echo "no test files found"; exit; }
+  (( ${#FilenamesT[@]} == 0 )) && { echo 'no test files found'; exit; }
 fi
 
 # strict mode
