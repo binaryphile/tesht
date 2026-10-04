@@ -1073,20 +1073,20 @@ test_MainSkip() {
   local -A case23=([name]='TESHT_NO_SKIP runs a failing body'
     [bodyLines]=$'test_s() { tesht.Skip x; return 1; }' [noSkip]=1
     [wantLines]=$'--- FAIL Nms test_s\nFAIL Nms\n0/1' [wantRC]=1)
-  local -A case24=([name]='middle of three subtests fails under -j 2' [jobs]=2
+  local -A case24=([name]='middle of three subtests fails under -j 2' [jobsArg]=2
     [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b) c=([name]=c); subtest() { [[ $1 != b ]] || tesht.AssertGot a b >/dev/null; }; tesht.Run a b c; }\ntest_u() { :; }'
     [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t/b\n--- PASS Nms test_t/c\n--- PASS Nms test_u\nFAIL Nms\n3/4' [wantRC]=1)
 
   subtest() {
     local casename=$1
-    unset -v wantErr noSkip jobs
+    unset -v wantErr noSkip jobsArg
     eval "$(tesht.Inherit $casename)"
 
     ## arrange
     local dir
     tesht.MktempDir dir || return 128
     local -a jobArgs=()
-    [[ -z ${jobs:-} ]] || jobArgs=( -j $jobs )
+    [[ -z ${jobsArg:-} ]] || jobArgs=( -j $jobsArg )
 
     ## act
     local gotLines rc
