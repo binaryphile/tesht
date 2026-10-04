@@ -1073,6 +1073,27 @@ test_MainSkip() {
   local -A case23=([name]='TESHT_NO_SKIP runs a failing body'
     [bodyLines]=$'test_s() { tesht.Skip x; return 1; }' [noSkip]=1
     [wantLines]=$'--- FAIL Nms test_s\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case25=([name]='test-level 128 after passing subtests is FATAL'
+    [bodyLines]=$'test_t() { local -A a=([name]=a); subtest() { :; }; tesht.Run a; return 128; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FATAL Nms test_t\nFAIL Nms\n1/2' [wantRC]=1)
+  local -A case26=([name]='test-level 128 after passing subtests is FATAL under -j 2' [jobsArg]=2
+    [bodyLines]=$'test_t() { local -A a=([name]=a); subtest() { :; }; tesht.Run a; return 128; }\ntest_u() { :; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FATAL Nms test_t\n--- PASS Nms test_u\nFAIL Nms\n2/3' [wantRC]=1)
+  local -A case27=([name]='skip before tesht.Run is a plain skip'
+    [bodyLines]=$'test_t() { tesht.Skip early; local -A a=([name]=a); subtest() { :; }; tesht.Run a; }'
+    [wantLines]=$'--- SKIP Nms test_t: early\nPASS Nms (1 skipped)\n0/0' [wantRC]=0)
+  local -A case28=([name]='passing subtests then return 1 is FAIL'
+    [bodyLines]=$'test_t() { local -A a=([name]=a); subtest() { :; }; tesht.Run a; return 1; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t\nFAIL Nms\n1/2' [wantRC]=1)
+  local -A case29=([name]='failing assertion in a Defer is FAIL'
+    [bodyLines]=$'test_d() { tesht.Defer "tesht.AssertGot a b >/dev/null"; :; }'
+    [wantLines]=$'--- FAIL Nms test_d\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case30=([name]='a nested run does not disarm the outer test'
+    [bodyLines]=$'test_o() { echo "test_in() { :; }" >"$TESHT_TEST_FILE.in_test.bash"; tesht.Main "" "$TESHT_TEST_FILE.in_test.bash" >/dev/null; tesht.AssertGot a b >/dev/null; }'
+    [wantLines]=$'--- FAIL Nms test_o\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case31=([name]='a carriage return in a reason prints as a space'
+    [bodyLines]=$'test_s() { tesht.Skip "a\rb"; }'
+    [wantLines]=$'--- SKIP Nms test_s: a b\nPASS Nms (1 skipped)\n0/0' [wantRC]=0)
   local -A case24=([name]='middle of three subtests fails under -j 2' [jobsArg]=2
     [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b) c=([name]=c); subtest() { [[ $1 != b ]] || tesht.AssertGot a b >/dev/null; }; tesht.Run a b c; }\ntest_u() { :; }'
     [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t/b\n--- PASS Nms test_t/c\n--- PASS Nms test_u\nFAIL Nms\n3/4' [wantRC]=1)

@@ -373,20 +373,20 @@ tesht.runSubtest() {
   columns='\r--- %s\t%s\t%s\n'
   local delta='1 0 0'
   if (( skipped )); then
-    printf '\r--- %s\t%s\t%s: %s\n' $SkipT $duration $testname "$reason_"
+    printf '\r--- %s\t%s\t%s: %s\n' "$SkipT" "$duration" "$testname" "$reason_"
     subtestSkipCount+=1   # in caller's scope
     delta='0 0 1'
   else
     subtestTestCount+=1   # in caller's scope
     case $rc in
       0   )
-        printf $columns $PassT $duration $testname
+        printf "$columns" "$PassT" "$duration" "$testname"
         subtestPassCount+=1   # in caller's scope
         delta='1 1 0'
         ;;
-      128 ) printf $columns $FatalT $duration $YellowT$testname$ResetT;;
+      128 ) printf "$columns" "$FatalT" "$duration" "$YellowT$testname$ResetT";;
 
-      *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
+      *   ) printf "$columns" "$FailT" "$duration" "$YellowT$testname$ResetT";;
     esac
   fi
   [[ -z ${TESHT_COUNT_FILE:-} ]] || echo $delta >>"$TESHT_COUNT_FILE"
@@ -557,9 +557,11 @@ tesht.test() {
 
     # A failure recorded at test level (before, between or after subtests),
     # or a nonzero rc no subtest explains, gets its own line and count, so
-    # P/T and FAIL-line readers see it too.
-    if (( failNow || (rc != 0 && rc != 128 && passed == tested) )); then
-      printf $columns $FailT $duration $YellowT$testname$ResetT
+    # P/T and FAIL-line readers see it too; rc 128 there is FATAL.
+    if (( failNow || (rc != 0 && passed == tested) )); then
+      local label=$FailT
+      (( rc == 128 && ! failNow )) && label=$FatalT
+      printf $columns $label $duration $YellowT$testname$ResetT
       TestCountT+=1
       failed=1
     fi
