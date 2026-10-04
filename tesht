@@ -69,6 +69,7 @@ ResetT=$'\033[0m'
 FailT=${RedT}FAIL$ResetT
 FatalT=${RedT}FATAL$ResetT
 PassT=${GreenT}PASS$ResetT
+SkipT=${YellowT}SKIP$ResetT
 RunT=${YellowT}RUN$ResetT
 
 UnixMilliFuncT=tesht.UnixMilli
@@ -83,21 +84,25 @@ tesht.Main() {
   local runRegexp_=${1:-} filenames=( ${2:-} )
   local -i jobs=${3:-1}
 
-  local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
+  local -i PassCountT=0 TestCountT=0 SkipCountT=0 failed=0   # -i enables arithmetic operations
   local -i startTime=$($UnixMilliFuncT)
 
   for filename in "${filenames[@]}"; do
     tesht.testFile $filename "$runRegexp_" $jobs || failed=1
   done
 
-  (( TestCountT > 0 )) || failed=2
+  (( TestCountT > 0 || SkipCountT > 0 )) || failed=2
 
   local -i endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
   local columns='%s\t\t%s\n'
   (( failed )) && local result=$FailT || local result=$PassT
-  printf $columns $result $duration
+  if (( SkipCountT > 0 )); then
+    printf '%s\t\t%s\t(%d skipped)\n' $result $duration $SkipCountT
+  else
+    printf $columns $result $duration
+  fi
 
   echo $PassCountT/$TestCountT
   return $failed
@@ -170,7 +175,7 @@ tesht.declareVar() {
 tesht.Defer() {
   local command=$1
   local NL=$'\n' # newline works with backgrounding (&) and legal semicolons, semicolon doesn't
-  trap "{ $command; } || true$NL$(tesht.existingDeferlist)" EXIT
+  trap "{ TESHT_IN_DEFER=1; $command; } || true$NL$(tesht.existingDeferlist)" EXIT
 }
 
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
@@ -334,30 +339,53 @@ tesht.runSubtest() {
 
   local -i startTime=$($UnixMilliFuncT)
   local rc
-  # Reset the per-test fail-flag before each subtest so a prior subtest's
-  # assertion failures don't leak into this one (#25287). Set
-  # TESHT_FAIL_FLAG_PID to the subtest subshell's BASHPID so helpers called
-  # directly inside the subtest body raise the flag, while helpers exercised
-  # via nested $(...) (e.g. in helper self-tests) do not.
-  [[ -n ${TESHT_FAIL_FLAG:-} ]] && rm -f "$TESHT_FAIL_FLAG"
-  ( TESHT_FAIL_FLAG_PID=$BASHPID; subtest $mapname ) && rc=$? || rc=$?
-  # Override rc=0 to rc=1 if any assertion helper raised the fail-flag inside
-  # the subtest body (set -e is suppressed by the && || invocation shape).
-  (( rc == 0 )) && [[ -n ${TESHT_FAIL_FLAG:-} && -e $TESHT_FAIL_FLAG ]] && rc=1
+  # Each subtest removes its own flags once judged (below), so a fail-flag
+  # present here was raised by the test body before or between subtests: keep
+  # it in the sticky marker, which tesht.test checks, before clearing it.
+  if [[ -n ${TESHT_FAIL_FLAG:-} ]]; then
+    [[ -e $TESHT_FAIL_FLAG ]] && touch "$TESHT_FAIL_FLAG.sticky"
+    rm -f "$TESHT_FAIL_FLAG" "${TESHT_SKIP_FLAG:-}"
+  fi
+  # TESHT_FAIL_FLAG_PID scopes the flags to this subshell: helpers called
+  # directly in the subtest body raise them, ones inside nested $(...) do not.
+  ( TESHT_FAIL_FLAG_PID=$BASHPID; TESHT_IN_SUBTEST=1; subtest $mapname ) && rc=$? || rc=$?
+  # FAIL wins over SKIP; set -e is suppressed by the && || invocation shape.
+  local -i skipped=0
+  local reason_=''
+  if [[ -n ${TESHT_FAIL_FLAG:-} ]]; then
+    (( rc == 0 )) && [[ -e $TESHT_FAIL_FLAG ]] && rc=1
+    if (( rc == 0 )) && [[ -e ${TESHT_SKIP_FLAG:-} ]]; then
+      skipped=1
+      reason_=$(<"$TESHT_SKIP_FLAG")
+    fi
+    rm -f "$TESHT_FAIL_FLAG" "${TESHT_SKIP_FLAG:-}"
+  fi
   local -i endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
 
-  subtestTestCount+=1   # in caller's scope
+  # Counts go to the per-test count file as each subtest finishes, so a later
+  # exit in the test body cannot lose them; the caller's counters gate a late
+  # test-level tesht.Skip.
   columns='\r--- %s\t%s\t%s\n'
-  case $rc in
-    0   )
-      printf $columns $PassT $duration $testname
-      subtestPassCount+=1   # in caller's scope
-      ;;
-    128 ) printf $columns $FatalT $duration $YellowT$testname$ResetT;;
+  local delta='1 0 0'
+  if (( skipped )); then
+    printf '\r--- %s\t%s\t%s: %s\n' $SkipT $duration $testname "$reason_"
+    subtestSkipCount+=1   # in caller's scope
+    delta='0 0 1'
+  else
+    subtestTestCount+=1   # in caller's scope
+    case $rc in
+      0   )
+        printf $columns $PassT $duration $testname
+        subtestPassCount+=1   # in caller's scope
+        delta='1 1 0'
+        ;;
+      128 ) printf $columns $FatalT $duration $YellowT$testname$ResetT;;
 
-    *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
-  esac
+      *   ) printf $columns $FailT $duration $YellowT$testname$ResetT;;
+    esac
+  fi
+  [[ -z ${TESHT_COUNT_FILE:-} ]] || echo $delta >>"$TESHT_COUNT_FILE"
 
   return $rc
 }
@@ -392,6 +420,44 @@ tesht.Softly() {
     eval "$LINE" || FAILED=1
   done
   return $FAILED
+}
+
+# tesht.Skip stops the current test or subtest and reports it as skipped with
+# `reason`, unless that would hide something or cannot work from here.
+#
+# The reason has newlines and carriage returns folded to spaces and every run
+# of three or more dashes printed as "--", so a SKIP line never contains
+# "--- FAIL". The skip is refused -- a stderr warning, return 0, and the body
+# carries on -- when TESHT_NO_SKIP=1, outside a running test, inside a
+# tesht.Defer cleanup, outside the test's own shell (e.g. in $(...)), or at
+# test level after any subtest has run. Otherwise it records the reason in
+# the per-test skip-flag and exits the test's or subtest's subshell.
+# shellcheck disable=SC9003 # test-callable helper: runs under the calling test file's IFS, so it quotes defensively (library role)
+tesht.Skip() {
+  local reason_=${1:-}
+  reason_=${reason_//$'\n'/ }
+  reason_=${reason_//$'\r'/ }
+  while [[ $reason_ == *---* ]]; do reason_=${reason_//---/--}; done
+
+  local why_=''
+  if [[ ${TESHT_NO_SKIP:-} == 1 ]]; then
+    why_='TESHT_NO_SKIP=1'
+  elif [[ -z ${TESHT_SKIP_FLAG:-} ]]; then
+    why_='no test is running'
+  elif [[ ${TESHT_IN_DEFER:-} == 1 ]]; then
+    why_='inside a tesht.Defer cleanup'
+  elif [[ ${TESHT_FAIL_FLAG_PID:-} != "$BASHPID" ]]; then
+    why_="not in the test's own shell"
+  elif [[ -z ${TESHT_IN_SUBTEST:-} ]] && (( ${subtestTestCount:-0} + ${subtestSkipCount:-0} > 0 )); then
+    why_='its subtests already ran'
+  fi
+  if [[ -n $why_ ]]; then
+    echo "tesht.Skip: ignored ($why_): $reason_" >&2
+    return 0
+  fi
+
+  printf '%s' "$reason_" >"$TESHT_SKIP_FLAG"
+  exit 0
 }
 
 # tesht.StartHttpServer starts an http server in the current directory on 127.0.0.1:port.
@@ -430,65 +496,83 @@ tesht.test() {
 
   local -i startTime=$($UnixMilliFuncT)
 
-  local tmpname_
-  tmpname_=$(mktemp -u)   # -u doesn't create a file, just a name
-  # Per-test fail-flag sentinel (#25287). Assertion helpers touch this file on
-  # failure; tesht.test (and tesht.runSubtest for subtests) checks the file
-  # after the test body returns to override a misleading rc=0 from set -e
-  # being suppressed by the && || invocation shape.
+  # Per-test sentinels: assertion helpers touch the fail-flag, tesht.Skip
+  # writes the skip-flag, runSubtest appends to the count file and keeps
+  # test-level failures in the sticky marker. All are judged here, outside the
+  # test's subshell, so an exit in the body cannot bypass them. They are saved
+  # and restored, so a nested run cannot disarm the outer test.
+  local prevFail_=${TESHT_FAIL_FLAG-} prevSkip_=${TESHT_SKIP_FLAG-} prevCount_=${TESHT_COUNT_FILE-}
   local failflag_
   failflag_=$(mktemp -u /tmp/tesht.failflag.XXXXXX)
   export TESHT_FAIL_FLAG=$failflag_
-  local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0
+  export TESHT_SKIP_FLAG=$failflag_.skip
+  export TESHT_COUNT_FILE=$failflag_.count
+  local -i hasSubtests=0 subtestTestCount=0 subtestPassCount=0 subtestSkipCount=0
   (
-    # Scope fail-flag touches to this test's subshell (#25287). Helpers
-    # called inside nested $(...) or (...) subshells (e.g. helper self-tests
-    # that capture an intentional assertion failure) run at a different
-    # BASHPID and are correctly ignored by the fail-flag mechanism.
     TESHT_FAIL_FLAG_PID=$BASHPID
+    TESHT_IN_SUBTEST=
     eval "$testSource_"
 
     [[ $(declare -f $testname) == *tesht.Run* ]] && hasSubtests=1
+    (( hasSubtests )) && : >$TESHT_COUNT_FILE
 
     local columns='=== %s\t\t\t%s'
     (( hasSubtests )) || printf $columns $RunT $testname
 
     $testname && rc=$? || rc=$?
-    # Override rc=0 to rc=1 if an assertion helper raised the fail-flag during
-    # the test body. Only relevant for non-subtest tests; tesht.runSubtest
-    # handles the flag per-subtest. Subtests' rc is reflected via the outer
-    # subtestPassCount aggregation, so the test-level rc here stays as-is.
-    (( hasSubtests )) || { (( rc == 0 )) && [[ -e $TESHT_FAIL_FLAG ]] && rc=1; }
-    (( hasSubtests )) && echo "$subtestTestCount $subtestPassCount" >$tmpname_
     exit $rc
   ) && rc=$? || rc=$?
-  rm -f "$failflag_"
-  unset TESHT_FAIL_FLAG
 
-  [[ -e $tmpname_ ]] && {
+  local -i failNow=0 skipNow=0 tested=0 passed=0 skippedSubs=0 a b c
+  local reason_=''
+  [[ -e $failflag_ || -e $failflag_.sticky ]] && failNow=1
+  if [[ -e $failflag_.skip ]]; then
+    skipNow=1
+    reason_=$(<"$failflag_.skip")
+  fi
+  if [[ -e $failflag_.count ]]; then
     hasSubtests=1
-    IFS=' ' read -r subtestTestCount subtestPassCount <$tmpname_
-    rm -f "$tmpname_"
-  }
+    while IFS=' ' read -r a b c; do
+      tested+=a; passed+=b; skippedSubs+=c
+    done <"$failflag_.count"
+  fi
+  rm -f "$failflag_" "$failflag_.skip" "$failflag_.sticky" "$failflag_.count"
+  [[ -n $prevFail_ ]] && export TESHT_FAIL_FLAG=$prevFail_ || unset TESHT_FAIL_FLAG
+  [[ -n $prevSkip_ ]] && export TESHT_SKIP_FLAG=$prevSkip_ || unset TESHT_SKIP_FLAG
+  [[ -n $prevCount_ ]] && export TESHT_COUNT_FILE=$prevCount_ || unset TESHT_COUNT_FILE
 
   local -i endTime=$($UnixMilliFuncT)
   local duration=$(( endTime - startTime ))ms
+  local columns='\r--- %s\t%s\t%s\n'
 
-  if (( hasSubtests )); then
-    TestCountT+=$subtestTestCount
-    PassCountT+=$subtestPassCount
+  # A test that skipped itself before any subtest ran is a plain skip.
+  if (( hasSubtests )) && ! (( tested + skippedSubs == 0 && skipNow )); then
+    TestCountT+=$tested
+    PassCountT+=$passed
+    SkipCountT+=$skippedSubs
 
-    # Propagate subtest failure to caller's `failed` (#25287). Without this,
-    # subtest FAIL markers reach stdout but tesht.Main reports overall PASS
-    # and exits 0 — same silent-pass class as the assertion-fail-flag bug.
-    (( rc != 0 )) && failed=1
+    # A failure recorded at test level (before, between or after subtests),
+    # or a nonzero rc no subtest explains, gets its own line and count, so
+    # P/T and FAIL-line readers see it too.
+    if (( failNow || (rc != 0 && rc != 128 && passed == tested) )); then
+      printf $columns $FailT $duration $YellowT$testname$ResetT
+      TestCountT+=1
+      failed=1
+    fi
+    # Subtest failures fail the test whatever its last command returned.
+    (( passed < tested || rc != 0 )) && failed=1
     (( rc == 128 )) && return 128
-    return
-  else
-    TestCountT+=1
+    return 0
   fi
 
-  local columns='\r--- %s\t%s\t%s\n'
+  (( rc == 0 && failNow )) && rc=1
+  if (( rc == 0 && skipNow )); then
+    printf '\r--- %s\t%s\t%s: %s\n' $SkipT $duration $testname "$reason_"
+    SkipCountT+=1
+    return 0
+  fi
+
+  TestCountT+=1
   case $rc in
     0 )
       printf $columns $PassT $duration $testname
@@ -571,20 +655,21 @@ tesht.testFile() {
       # Workers inherit the parent's EXIT trap (parDir-cleanup Defer). Reset
       # it so a worker exit doesn't rm -rf parDir out from under siblings.
       trap - EXIT
-      local -i TestCountT=0 PassCountT=0 failed=0
+      local -i TestCountT=0 PassCountT=0 SkipCountT=0 failed=0
       tesht.test "$testSource_" ${selectedTests[idx]} >"$parDir/$idx.out" 2>&1 || true
-      echo "$TestCountT $PassCountT $failed" >"$parDir/$idx.cnt"
+      echo "$TestCountT $PassCountT $failed $SkipCountT" >"$parDir/$idx.cnt"
     ) &
   done
   wait
 
-  local -i tc pc f
+  local -i tc pc f sc
   for (( idx = 0; idx < ${#selectedTests[@]}; idx++ )); do
     cat -- "$parDir/$idx.out"
-    tc=0; pc=0; f=0
-    IFS=' ' read -r tc pc f <"$parDir/$idx.cnt" || true
+    tc=0; pc=0; f=0; sc=0
+    IFS=' ' read -r tc pc f sc <"$parDir/$idx.cnt" || true
     TestCountT+=$tc
     PassCountT+=$pc
+    SkipCountT+=$sc
     (( f )) && failed=1
   done
 

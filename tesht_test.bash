@@ -978,3 +978,144 @@ echoLines() {
   local IFS=$NL
   echo "$*"
 }
+
+# skipRun writes `bodyLines` to a test file in `dir` and runs tesht on it as a
+# subprocess (TESHT_NO_SKIP unset unless `noSkip` is 1). It prints the result
+# lines normalized for comparison: one line per `---` result, then the result
+# and P/T lines, with colors stripped, durations as Nms and tabs as one space.
+# Its own exit status is tesht's; stderr goes to `dir`/err.
+skipRun() {
+  local dir=$1 bodyLines=$2 noSkip=${3:-0}
+  local -a args=( "${@:4}" )
+  echoLines "$bodyLines" >$dir/case_test.bash
+  local outLines rc
+  if (( noSkip )); then
+    outLines=$(cd $dir && TESHT_NO_SKIP=1 $TESHT_PATHT "${args[@]}" case_test.bash 2>$dir/err) && rc=$? || rc=$?
+  else
+    outLines=$(cd $dir && env -u TESHT_NO_SKIP $TESHT_PATHT "${args[@]}" case_test.bash 2>$dir/err) && rc=$? || rc=$?
+  fi
+  local normLines
+  normLines=$(tr '\r' '\n' <<<"$outLines" | sed 's/\x1b\[[0-9;]*m//g; s/[0-9][0-9]*ms/Nms/g; s/\t\t*/ /g' | grep -v '^=== RUN' | grep -v '^[[:space:]]*$')
+  grep '^--- ' <<<"$normLines" || true
+  grep -v '^--- ' <<<"$normLines" | tail -2
+  return $rc
+}
+
+# test_MainSkip checks tesht.Skip's reporting and the FAIL-wins rule, plus the
+# failures that skipping depends on no longer being masked.
+test_MainSkip() {
+  local -A case1=([name]='skipped test'
+    [bodyLines]=$'test_ok() { :; }\ntest_s() { tesht.Skip "not yet"; return 1; }'
+    [wantLines]=$'--- PASS Nms test_ok\n--- SKIP Nms test_s: not yet\nPASS Nms (1 skipped)\n1/1' [wantRC]=0)
+  local -A case2=([name]='skipped subtest'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { [[ $1 == a ]] || tesht.Skip why; }; tesht.Run a b; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- SKIP Nms test_t/b: why\nPASS Nms (1 skipped)\n1/1' [wantRC]=0)
+  local -A case3=([name]='fail then skip in a test is FAIL'
+    [bodyLines]=$'test_f() { tesht.AssertGot a b >/dev/null; tesht.Skip late; }'
+    [wantLines]=$'--- FAIL Nms test_f\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case4=([name]='fail then skip in a subtest is FAIL'
+    [bodyLines]=$'test_t() { local -A x=([name]=x); subtest() { tesht.AssertGot a b >/dev/null; tesht.Skip late; }; tesht.Run x; }'
+    [wantLines]=$'--- FAIL Nms test_t/x\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case5=([name]='fail then exit 0 is FAIL'
+    [bodyLines]=$'test_f() { tesht.AssertGot a b >/dev/null; exit 0; }'
+    [wantLines]=$'--- FAIL Nms test_f\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case6=([name]='late skip after a failed subtest is refused'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { [[ $1 == b ]]; }; tesht.Run a b; tesht.Skip late; }'
+    [wantLines]=$'--- FAIL Nms test_t/a\n--- PASS Nms test_t/b\nFAIL Nms\n1/2' [wantRC]=1 [wantErr]='tesht.Skip: ignored')
+  local -A case7=([name]='failed subtest then a 0-returning command is FAIL'
+    [bodyLines]=$'test_t() { local -A a=([name]=a); subtest() { return 1; }; tesht.Run a; tesht.Log done; }'
+    [wantLines]=$'--- FAIL Nms test_t/a\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case8=([name]='assertion before Run with a passing subtest is FAIL'
+    [bodyLines]=$'test_t() { tesht.AssertGot a b >/dev/null; local -A a=([name]=a); subtest() { :; }; tesht.Run a; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t\nFAIL Nms\n1/2' [wantRC]=1)
+  local -A case9=([name]='assertion before Run with a skipped subtest is FAIL'
+    [bodyLines]=$'test_t() { tesht.AssertGot a b >/dev/null; local -A a=([name]=a); subtest() { tesht.Skip s; }; tesht.Run a; }'
+    [wantLines]=$'--- SKIP Nms test_t/a: s\n--- FAIL Nms test_t\nFAIL Nms (1 skipped)\n0/1' [wantRC]=1)
+  local -A case10=([name]='assertion after Run is FAIL'
+    [bodyLines]=$'test_t() { local -A a=([name]=a); subtest() { :; }; tesht.Run a; tesht.AssertGot a b >/dev/null; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t\nFAIL Nms\n1/2' [wantRC]=1)
+  local -A case11=([name]='dashes in a reason are rendered safely'
+    [bodyLines]=$'test_s() { tesht.Skip "waiting on --- FAIL and ---- FATAL"; }'
+    [wantLines]=$'--- SKIP Nms test_s: waiting on -- FAIL and -- FATAL\nPASS Nms (1 skipped)\n0/0' [wantRC]=0)
+  local -A case12=([name]='one failing subtest counts once'
+    [bodyLines]=$'test_t() { local -A x=([name]=x); subtest() { tesht.AssertGot a b >/dev/null; }; tesht.Run x; }'
+    [wantLines]=$'--- FAIL Nms test_t/x\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case13=([name]='middle of three subtests fails'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b) c=([name]=c); subtest() { [[ $1 != b ]] || tesht.AssertGot a b >/dev/null; }; tesht.Run a b c; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t/b\n--- PASS Nms test_t/c\nFAIL Nms\n2/3' [wantRC]=1)
+  local -A case14=([name]='failed subtest survives a later exit 0'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { [[ $1 == b ]]; }; tesht.Run a b; exit 0; }'
+    [wantLines]=$'--- FAIL Nms test_t/a\n--- PASS Nms test_t/b\nFAIL Nms\n1/2' [wantRC]=1)
+  local -A case15=([name]='skip in a Defer is refused'
+    [bodyLines]=$'test_d() { tesht.Defer "tesht.Skip late"; :; }'
+    [wantLines]=$'--- PASS Nms test_d\nPASS Nms\n1/1' [wantRC]=0 [wantErr]='tesht.Skip: ignored')
+  local -A case16=([name]='fail then skip in the last subtest'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { [[ $1 == a ]] && return; tesht.AssertGot x y >/dev/null; tesht.Skip s; }; tesht.Run a b; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t/b\nFAIL Nms\n1/2' [wantRC]=1)
+  local -A case17=([name]='skip after all subtests skipped is refused'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { tesht.Skip s; }; tesht.Run a b; tesht.Skip late; }'
+    [wantLines]=$'--- SKIP Nms test_t/a: s\n--- SKIP Nms test_t/b: s\nPASS Nms (2 skipped)\n0/0' [wantRC]=0 [wantErr]='tesht.Skip: ignored')
+  local -A case18=([name]='failing subtest then skipped subtest'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { [[ $1 == b ]] && tesht.Skip s; return 1; }; tesht.Run a b; }'
+    [wantLines]=$'--- FAIL Nms test_t/a\n--- SKIP Nms test_t/b: s\nFAIL Nms (1 skipped)\n0/1' [wantRC]=1)
+  local -A case19=([name]='skipped subtest then failing subtest'
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b); subtest() { [[ $1 == a ]] && tesht.Skip s; return 1; }; tesht.Run a b; }'
+    [wantLines]=$'--- SKIP Nms test_t/a: s\n--- FAIL Nms test_t/b\nFAIL Nms (1 skipped)\n0/1' [wantRC]=1)
+  local -A case20=([name]='nested $() skip is refused'
+    [bodyLines]=$'test_n() { local x_; x_=$(tesht.Skip inner); :; }'
+    [wantLines]=$'--- PASS Nms test_n\nPASS Nms\n1/1' [wantRC]=0 [wantErr]='tesht.Skip: ignored')
+  local -A case21=([name]='a newline in a reason prints on one line'
+    [bodyLines]=$'test_s() { tesht.Skip "two\nlines"; }'
+    [wantLines]=$'--- SKIP Nms test_s: two lines\nPASS Nms (1 skipped)\n0/0' [wantRC]=0)
+  local -A case22=([name]='TESHT_NO_SKIP runs a passing body'
+    [bodyLines]=$'test_s() { tesht.Skip x; :; }' [noSkip]=1
+    [wantLines]=$'--- PASS Nms test_s\nPASS Nms\n1/1' [wantRC]=0 [wantErr]='tesht.Skip: ignored')
+  local -A case23=([name]='TESHT_NO_SKIP runs a failing body'
+    [bodyLines]=$'test_s() { tesht.Skip x; return 1; }' [noSkip]=1
+    [wantLines]=$'--- FAIL Nms test_s\nFAIL Nms\n0/1' [wantRC]=1)
+  local -A case24=([name]='middle of three subtests fails under -j 2' [jobs]=2
+    [bodyLines]=$'test_t() { local -A a=([name]=a) b=([name]=b) c=([name]=c); subtest() { [[ $1 != b ]] || tesht.AssertGot a b >/dev/null; }; tesht.Run a b c; }\ntest_u() { :; }'
+    [wantLines]=$'--- PASS Nms test_t/a\n--- FAIL Nms test_t/b\n--- PASS Nms test_t/c\n--- PASS Nms test_u\nFAIL Nms\n3/4' [wantRC]=1)
+
+  subtest() {
+    local casename=$1
+    unset -v wantErr noSkip jobs
+    eval "$(tesht.Inherit $casename)"
+
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+    local -a jobArgs=()
+    [[ -z ${jobs:-} ]] || jobArgs=( -j $jobs )
+
+    ## act
+    local gotLines rc
+    gotLines=$(skipRun $dir "$bodyLines" ${noSkip:-0} "${jobArgs[@]}") && rc=$? || rc=$?
+
+    ## assert
+    tesht.AssertGot "$gotLines" "$wantLines"
+    tesht.AssertRC $rc $wantRC
+    [[ -z ${wantErr:-} ]] || [[ $(<$dir/err) == *"$wantErr"* ]] || { tesht.Log "stderr lacks '$wantErr': $(<$dir/err)"; return 1; }
+  }
+
+  tesht.Run ${!case@}
+}
+
+# test_MainSkipParallel checks that -j 2 over two files counts a skip in the
+# first file once, as a serial run does.
+test_MainSkipParallel() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  echoLines 'test_s() { tesht.Skip later; }' 'test_a() { :; }' >$dir/a_test.bash
+  echoLines 'test_b() { :; }' >$dir/b_test.bash
+
+  ## act
+  local serialLines parallelLines
+  serialLines=$(cd $dir && env -u TESHT_NO_SKIP $TESHT_PATHT a_test.bash b_test.bash 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/[0-9][0-9]*ms/Nms/g' | tail -2)
+  parallelLines=$(cd $dir && env -u TESHT_NO_SKIP $TESHT_PATHT -j 2 a_test.bash b_test.bash 2>&1 | sed 's/\x1b\[[0-9;]*m//g; s/[0-9][0-9]*ms/Nms/g' | tail -2)
+
+  ## assert
+  tesht.AssertGot "$serialLines" $'PASS\t\tNms\t(1 skipped)\n2/2'
+  tesht.AssertGot "$parallelLines" "$serialLines"
+}
