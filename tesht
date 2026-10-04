@@ -18,6 +18,7 @@
 # "local -n ARRAY=$1".
 
 IFS=$'\n'
+set -o noglob
 NL=$'\n'
 
 Prog=$(basename "$0")   # match what the user called
@@ -79,14 +80,14 @@ UnixMilliFuncT=tesht.UnixMilli
 #       $2 = newline-separated list of test files (typically built via tesht.ListOf);
 #       $3 = within-file parallelism (default 1 = serial; -j N flag, #37833).
 tesht.Main() {
-  local runRegexp=${1:-} filenames=( ${2:-} )
+  local runRegexp_=${1:-} filenames=( ${2:-} )
   local -i jobs=${3:-1}
 
   local -i PassCountT=0 TestCountT=0 failed=0   # -i enables arithmetic operations
   local -i startTime=$($UnixMilliFuncT)
 
   for filename in "${filenames[@]}"; do
-    tesht.testFile $filename "$runRegexp" $jobs || failed=1
+    tesht.testFile $filename "$runRegexp_" $jobs || failed=1
   done
 
   (( TestCountT > 0 )) || failed=2
@@ -113,6 +114,7 @@ tesht.Main() {
 # nested $(...) or (...) -- e.g. helper self-tests that capture the helper's
 # failure output -- runs at a different BASHPID and does not taint the outer
 # verdict.
+# shellcheck disable=SC9003 # test-callable helper: runs under the calling test file's IFS, so it quotes defensively (library role)
 tesht.failFlag() {
   [[ -z ${TESHT_FAIL_FLAG:-} ]] && return
   [[ ${TESHT_FAIL_FLAG_PID:-} == "$BASHPID" ]] || return
@@ -121,9 +123,9 @@ tesht.failFlag() {
 
 # tesht.AssertGot returns whether the items match and, if not, outputs a message.
 tesht.AssertGot() {
-  local got=$1 want=${2:-}
+  local gotLines=$1 wantLines=${2:-}
 
-  [[ $got == "$want" ]] && return
+  [[ $gotLines == "$wantLines" ]] && return
 
   tesht.failFlag
 
@@ -131,10 +133,10 @@ tesht.AssertGot() {
 
 
 got does not match want:
-$(tesht.Diff "$got" "$want")
+$(tesht.Diff "$gotLines" "$wantLines")
 
 use this line to update want to match:
-    want=${got@Q}
+    want=${gotLines@Q}
 
 END
 
@@ -174,8 +176,8 @@ tesht.Defer() {
 # tesht.Diff returns a diff of its arguments with special characters shown by cat.
 # It is a test helper to generate failed assertion output.
 tesht.Diff() {
-  local got=$1 want=$2
-  diff <(echo "$got") <(echo "$want") | cat -vT | tail -n +2
+  local gotLines=$1 wantLines=$2
+  diff <(echo "$gotLines") <(echo "$wantLines") | cat -vT | tail -n +2
 }
 
 # tesht.existingDeferlist returns the current EXIT trap command without the trap wrapper.
@@ -190,6 +192,7 @@ tesht.existingDeferlist() {
 # The map is an associative array variable in the outer scope named by mapname.
 # It is a test helper that makes it simple to work with the keys of the testmap.
 # Inspired by nix's inherit keyword.
+# shellcheck disable=SC9003 # test-callable helper: runs under the calling test file's IFS, so it quotes defensively (library role)
 tesht.Inherit() {
   local MAPNAME=$1
   local -n MAP=$MAPNAME
@@ -299,6 +302,7 @@ tesht.portIsInUse() {
 }
 
 # tesht.Run runs tesht.runSubtest on each test case.
+# shellcheck disable=SC9003 # test-callable helper: runs under the calling test file's IFS, so it quotes defensively (library role)
 tesht.Run() {
   local FAILED=0 CASENAME
   for CASENAME in "$@"; do
@@ -318,6 +322,7 @@ tesht.Run() {
 # It returns an error result code if there was failure.
 # It cannot wholly rely on the global namespace for tesht functions/variables
 # because it runs in the context of a test, so be careful.
+# shellcheck disable=SC9003 # test-callable helper: runs under the calling test file's IFS, so it quotes defensively (library role)
 tesht.runSubtest() {
   local testname=$1 mapname=$2
 
@@ -380,6 +385,7 @@ tesht.Smoke() {
 }
 
 # tesht.Softly runs assertions provided on stdin and reports whether any failed.
+# shellcheck disable=SC9003 # test-callable helper: runs under the calling test file's IFS, so it quotes defensively (library role)
 tesht.Softly() {
   local FAILED=0 LINE=''  # don't mask higher namespaces
   while IFS='' read -r LINE; do
@@ -509,7 +515,7 @@ tesht.test() {
 # the per-test buffers in source-file order and accumulates the deltas, so
 # the printed output and pass/fail counts match the serial path.
 tesht.testFile() {
-  local filename=$1 runRegexp=${2:-}
+  local filename=$1 runRegexp_=${2:-}
   local -i jobs=${3:-1}
 
   local failed=0    # overall result -- fails if any individual run fails
@@ -531,12 +537,12 @@ tesht.testFile() {
   # directly with their own explicit args (e.g. tesht_test.bash's own
   # test_Main subtests) working unchanged -- only the literal, universal
   # trailing boilerplate line is ever removed.
-  local testSource_=$(grep -v '^tesht\.Main "\$@"$' "$filename")
-  export TESHT_TEST_FILE=$(realpath -- "$filename")
+  local testSource_=$(grep -v '^tesht\.Main "\$@"$' $filename)
+  export TESHT_TEST_FILE=$(realpath -- $filename)
 
   if (( jobs <= 1 )); then
     for testname in ${testsInFile[@]}; do
-      [[ -z $runRegexp || $testname =~ $runRegexp ]] && tesht.test "$testSource_" $testname
+      [[ -z $runRegexp_ || $testname =~ $runRegexp_ ]] && tesht.test "$testSource_" $testname
     done
     return $failed
   fi
@@ -544,7 +550,7 @@ tesht.testFile() {
   # Parallel path: filter, fan out across `jobs` workers, serialize results.
   local -a selectedTests=()
   for testname in ${testsInFile[@]}; do
-    [[ -z $runRegexp || $testname =~ $runRegexp ]] && selectedTests+=( "$testname" )
+    [[ -z $runRegexp_ || $testname =~ $runRegexp_ ]] && selectedTests+=( "$testname" )
   done
   (( ${#selectedTests[@]} == 0 )) && return 0
 
@@ -566,7 +572,7 @@ tesht.testFile() {
       # it so a worker exit doesn't rm -rf parDir out from under siblings.
       trap - EXIT
       local -i TestCountT=0 PassCountT=0 failed=0
-      tesht.test "$testSource_" "${selectedTests[idx]}" >"$parDir/$idx.out" 2>&1 || true
+      tesht.test "$testSource_" ${selectedTests[idx]} >"$parDir/$idx.out" 2>&1 || true
       echo "$TestCountT $PassCountT $failed" >"$parDir/$idx.cnt"
     ) &
   done
@@ -596,7 +602,7 @@ tesht.UnixMilli() {
 # Parse command-line options + positionals. Flags can interleave with positional
 # args; the loop classifies each arg per turn. `--` terminates flag parsing
 # (everything after is positional, including args that start with `-`).
-RunRegexpT=''
+RunRegexpT_=''
 FilenamesT=()
 JobsT=1
 while (( $# )); do
@@ -605,9 +611,9 @@ while (( $# )); do
     -x|--trace) set -x; shift;;
     --run)
       [[ ${2-} != -- ]] && (( $# >= 2 )) || { echo 'error: --run requires a regexp' >&2; exit 2; }
-      RunRegexpT=$2; shift 2
+      RunRegexpT_=$2; shift 2
       ;;
-    --run=*)    RunRegexpT=${1#--run=}; shift;;
+    --run=*)    RunRegexpT_=${1#--run=}; shift;;
     -run|-run=*)  # obsolete-flag-reject-test
       echo 'error: -run was removed; use --run REGEXP' >&2; exit 2;;  # obsolete-flag-reject-test
     -j|--jobs)
@@ -641,9 +647,9 @@ done
 ExpandedFilesT=()
 for arg in "${FilenamesT[@]+"${FilenamesT[@]}"}"; do
   if [[ -d $arg ]]; then
-    shopt -s nullglob
+    set +o noglob; shopt -s nullglob
     dirFilesT=( "$arg"/*_test.bash )
-    shopt -u nullglob
+    shopt -u nullglob; set -o noglob
     (( ${#dirFilesT[@]} > 0 )) || {
       echo "error: no *_test.bash files in directory: $arg" >&2
       exit 2
@@ -663,9 +669,9 @@ FilenamesT=( "${ExpandedFilesT[@]+"${ExpandedFilesT[@]}"}" )
 
 # If no files specified, use all test files in cwd.
 if (( ${#FilenamesT[@]} == 0 )); then
-  shopt -s nullglob
+  set +o noglob; shopt -s nullglob
   FilenamesT=( *_test.bash )
-  shopt -u nullglob
+  shopt -u nullglob; set -o noglob
   (( ${#FilenamesT[@]} == 0 )) && { echo 'no test files found'; exit; }
 fi
 
@@ -673,4 +679,4 @@ fi
 return 2>/dev/null
 set -euf
 
-tesht.Main "$RunRegexpT" "$(tesht.ListOf "${FilenamesT[@]}")" "$JobsT"
+tesht.Main "$RunRegexpT_" "$(tesht.ListOf "${FilenamesT[@]}")" $JobsT
