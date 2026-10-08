@@ -91,11 +91,15 @@ workers.
 
 Caveats: files must be isolated from each other (no fixed paths outside a temp
 dir, no fixed ports, no functions one file leaves for the next); output appears
-only when all files finish (with more than one file), each file's stderr after its stdout; workers read
-stdin from `/dev/null`; tests asserting on elapsed time see more host load.
-Each worker runs in its own process group: Ctrl-C or TERM to tesht stops the
-workers and everything they started, but `kill -KILL` to tesht cannot, and a
-daemon that left its group and parent is out of reach.
+only when all files finish (with more than one file), each file's stderr after
+its stdout; workers read stdin from `/dev/null`; tests asserting on elapsed time
+see more host load. Each worker runs in its own process group: Ctrl-C or TERM
+to tesht stops the workers and everything they started, but `kill -KILL` to
+tesht cannot, and a daemon that left its group and parent is out of reach.
+Because that group is not the terminal's foreground group, a test that reads
+from or configures the controlling terminal (`/dev/tty`, `stty`) stops under
+`-p`; run such files serially. A sourcing caller's own background jobs neither
+take worker slots nor delay the result.
 
 ## Test discovery
 

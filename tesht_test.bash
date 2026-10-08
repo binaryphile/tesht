@@ -1312,12 +1312,55 @@ test_liveWorkers_ignores_pids_that_are_not_running_jobs() {
   [[ $gotLines =~ ^job=[0-9]+\ other=$ ]] || { tesht.Log "want the job listed and the other pid not, got: $gotLines"; return 1; }
 }
 
+# test_liveWorkers_lists_a_stopped_job verifies a stopped worker is still stopped
+# on interrupt and still holds its slot: it is unreaped, so its pid is its own.
+test_liveWorkers_lists_a_stopped_job() {
+  # A shell of its own with job control, as an interactive caller has: only under
+  # job control does bash record that a job stopped.
+  local gotLines
+  gotLines=$(bash -c 'set -m; source "$1"; sleep 5 & job=$!; kill -STOP $job; sleep 0.3; echo "job=$(tesht.liveWorkers $job)"; kill -KILL $job' _ $TESHT_PATHT)
+
+  [[ $gotLines =~ ^job=[0-9]+$ ]] || { tesht.Log "want the stopped job listed, got: $gotLines"; return 1; }
+}
+
+# test_testFiles_ignores_the_callers_jobs verifies a caller that sourced tesht and
+# holds a background job of its own gets its results without waiting for that job,
+# and gets its own INT trap back.
+test_testFiles_ignores_the_callers_jobs() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  local name
+  for name in one two; do
+    echo "test_$name() { :; }" >$dir/${name}_test.bash
+  done
+
+  ## act
+  local gotLines
+  gotLines=$(
+    sleep 30 &
+    local callerJob=$!
+    trap 'echo mine' INT
+    local -i TestCountT=0 PassCountT=0 SkipCountT=0 start=$SECONDS rc=0
+    tesht.testFiles '' 1 1 $dir/one_test.bash $dir/two_test.bash >/dev/null 2>&1 || rc=$?
+    echo "rc=$rc passed=$PassCountT secs=$(( SECONDS - start )) caller=$(tesht.liveWorkerCount $callerJob) trap=$(trap -p INT)"
+    kill $callerJob
+  )
+
+  ## assert
+  local want="rc=0 passed=2 secs=[0-9] caller=1 trap=trap -- 'echo mine' SIGINT"
+  [[ $gotLines =~ ^$want$ ]] || { tesht.Log "want: $want"; tesht.Log "got:  $gotLines"; return 1; }
+}
+
 # test_workerCounts_requires_five_integers verifies a worker's counter file is
 # trusted only when complete: a truncated one counts as a failed worker.
 test_workerCounts_requires_five_integers() {
   local -A case1=([name]='complete'  [content]='3 3 0 0 0' [wantRC]=0)
   local -A case2=([name]='truncated' [content]='3 3'       [wantRC]=1)
   local -A case3=([name]='garbage'   [content]='3 x 0 0 0' [wantRC]=1)
+  local -A case4=([name]='six'       [content]='3 3 0 0 0 0' [wantRC]=1)
+  local -A case5=([name]='negative'  [content]='3 -3 0 0 0' [wantRC]=1)
+  local -A case6=([name]='empty'     [content]=''          [wantRC]=1)
 
   subtest() {
     local casename=$1

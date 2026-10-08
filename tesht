@@ -35,7 +35,7 @@ Usage:
     -j N | --jobs N     run up to N tests concurrently within each file
                         (also -jN and --jobs=N; default: 1 = serial)
     -p N | --file-jobs N  run up to N test files concurrently
-                        (also -pN and --file-jobs=N; default: 1 = serial;
+                        (also -pN and --file-jobs=N; N below 10000; default: 1 = serial;
                         output stays in file order; composes with -j)
     -h | --help         show this message and exit
     -x | --trace        enable debug tracing
@@ -720,13 +720,14 @@ tesht.testFiles() {
   local callerMonitor=+m
   [[ $- == *m* ]] && callerMonitor=-m
   # Only workers still running are stopped: a reaped worker's pid may belong to someone else now.
-  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]}); rm -rf -- '$quotedDir'; exit 130' INT
-  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]}); rm -rf -- '$quotedDir'; exit 143' TERM
-  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]}); rm -rf -- '$quotedDir'; exit 129' HUP
+  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]+"${workers[@]}"}); rm -rf -- '$quotedDir'; exit 130' INT
+  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]+"${workers[@]}"}); rm -rf -- '$quotedDir'; exit 143' TERM
+  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]+"${workers[@]}"}); rm -rf -- '$quotedDir'; exit 129' HUP
 
   local -i idx
   for (( idx = 0; idx < ${#files[@]}; idx++ )); do
-    while (( $(jobs -pr | wc -l) >= fileJobs )); do
+    # Only this call's workers count: a caller that sourced tesht may have jobs of its own.
+    while (( $(tesht.liveWorkerCount ${workers[@]+"${workers[@]}"}) >= fileJobs )); do
       wait -n 2>/dev/null || true
     done
     # With job control on for the spawn, the worker leads its own process group, so
@@ -748,7 +749,7 @@ tesht.testFiles() {
     workers+=( $! )
     set $callerMonitor
   done
-  wait
+  wait ${workers[@]+"${workers[@]}"} 2>/dev/null || true
   # Through the replay, an interrupt only removes the results directory.
   trap 'rm -rf -- '$quotedDir'; exit 130' INT
   trap 'rm -rf -- '$quotedDir'; exit 143' TERM
@@ -776,14 +777,25 @@ tesht.testFiles() {
   return $failed
 }
 
-# tesht.liveWorkers prints the given pids that are still running jobs of this shell.
+# tesht.liveWorkers prints the given pids that are still unreaped jobs of this
+# shell, running or stopped (a stopped worker still holds its slot and its pid).
 tesht.liveWorkers() {
   local live_ pid
-  live_=$(jobs -pr)
+  # Each `jobs` stands alone in its substitution: only there does it see this shell's table.
+  live_=$(jobs -pr)$NL$(jobs -ps)
   for pid in "$@"; do
     grep -qx -- $pid <<<"$live_" && echo $pid
   done
   return 0
+}
+
+# tesht.liveWorkerCount prints how many of the given pids are live workers.
+tesht.liveWorkerCount() {
+  local live_
+  live_=$(tesht.liveWorkers "$@")
+  [[ -z $live_ ]] && { echo 0; return; }
+  local newlines=${live_//[^$NL]/}
+  echo $(( ${#newlines} + 1 ))
 }
 
 # tesht.workerCounts prints a worker's counter file when it holds exactly five
@@ -810,19 +822,19 @@ tesht.stopGroups() {
     tree+=( ${found[@]+"${found[@]}"} )
   done
   (( ${#groups[@]} + ${#tree[@]} > 0 )) || return 0
-  kill -TERM -- ${groups[@]} ${tree[@]} 2>/dev/null || true
-  kill -CONT -- ${groups[@]} ${tree[@]} 2>/dev/null || true
+  kill -TERM -- ${groups[@]+"${groups[@]}"} ${tree[@]+"${tree[@]}"} 2>/dev/null || true
+  kill -CONT -- ${groups[@]+"${groups[@]}"} ${tree[@]+"${tree[@]}"} 2>/dev/null || true
   local -i try alive
   local target
   for (( try = 0; try < 20; try++ )); do
     alive=0
-    for target in ${groups[@]} ${tree[@]}; do
+    for target in ${groups[@]+"${groups[@]}"} ${tree[@]+"${tree[@]}"}; do
       kill -0 -- $target 2>/dev/null && alive=1
     done
     (( alive )) || return 0
     sleep 0.1
   done
-  kill -KILL -- ${groups[@]} ${tree[@]} 2>/dev/null || true
+  kill -KILL -- ${groups[@]+"${groups[@]}"} ${tree[@]+"${tree[@]}"} 2>/dev/null || true
 }
 
 # tesht.descendants prints pid and all its descendants, depth first, reading each
