@@ -972,6 +972,402 @@ test_cli_j_runs_tests_concurrently() {
   END
 }
 
+# test_cli_p_matches_serial verifies -p N prints the same results on stdout,
+# the same stderr, the same totals and the same exit code as the serial run,
+# across a pass, a failure, a skip, a test that writes to stderr and subtests
+# that make temp dirs (there tesht.Defer rebuilds the worker's inherited EXIT
+# trap, which must not run in the subtest's subshell).
+test_cli_p_matches_serial() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  echoLines 'test_a1() { :; }' 'test_a2() { echo a2 complains >&2; }' >a_test.bash
+  echoLines 'test_b1() { return 1; }' 'test_b2() { tesht.Skip "not here"; }' >b_test.bash
+  # 'tesht''.Run' below is split so this test's own source does not read as a
+  # subtest parent to tesht's subtest detection.
+  echoLines 'test_c1() { :; }' \
+    'test_c2() {' \
+    "  local -A case1=([name]='one')" \
+    "  local -A case2=([name]='two')" \
+    '  subtest() { local d; tesht.MktempDir d; }' \
+    '  tesht''.Run ${!case@}' \
+    '}' >c_test.bash
+
+  local serialLines parallelLines serialRC=0 parallelRC=0
+  serialLines=$($TESHT_PATHT a_test.bash b_test.bash c_test.bash 2>serial.err) || serialRC=$?
+  parallelLines=$($TESHT_PATHT -p 3 a_test.bash b_test.bash c_test.bash 2>parallel.err) || parallelRC=$?
+
+  tesht.Softly <<'  END'
+    tesht.AssertRC $parallelRC $serialRC
+    tesht.AssertRC $parallelRC 1
+    tesht.AssertGot "$(normalizeRun "$parallelLines")" "$(normalizeRun "$serialLines")"
+    tesht.AssertGot "$(<parallel.err)" "$(<serial.err)"
+    tesht.AssertGot "$(<parallel.err)" 'a2 complains'
+    [[ $(tail -1 <<<$parallelLines) == 5/6 ]] || { tesht.Log "expected 5/6, got: $parallelLines"; return 1; }
+  END
+}
+
+# test_cli_p_keeps_argument_order verifies results print in argument order, not
+# completion order: the first file's test waits for the last file's mark, so it
+# finishes last, yet its results still print first.
+test_cli_p_keeps_argument_order() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  barrierFile f1 'f3' >f1_test.bash
+  barrierFile f2 '' >f2_test.bash
+  barrierFile f3 '' >f3_test.bash
+
+  local gotLines
+  gotLines=$(BarrierDir=$dir BarrierTries=100 $TESHT_PATHT -p 3 f1_test.bash f2_test.bash f3_test.bash 2>&1)
+
+  local orderLines
+  orderLines=$(normalizeRun "$gotLines" | grep -E -- '^--- ' | grep -oE 'test_f[0-9]')
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$orderLines" $'test_f1\ntest_f2\ntest_f3'
+    tesht.AssertGot "$(tail -1 <<<$gotLines)" '3/3'
+  END
+}
+
+# test_cli_p_runs_files_concurrently verifies -p N runs files at the same time.
+# Each file's test marks itself, then waits for all three marks: the rendezvous
+# completes only if the files overlap, however loaded the host is. The serial
+# run is the control: there the first file waits alone, so it must fail.
+test_cli_p_runs_files_concurrently() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local name
+  for name in f1 f2 f3; do
+    barrierFile $name 'f1 f2 f3' >${name}_test.bash
+  done
+
+  local parallelOut_ serialOut_
+  mkdir par ser
+  parallelOut_=$(BarrierDir=$dir/par BarrierTries=100 $TESHT_PATHT -p 3 f1_test.bash f2_test.bash f3_test.bash 2>&1 | tail -1)
+  serialOut_=$(BarrierDir=$dir/ser BarrierTries=3 $TESHT_PATHT f1_test.bash f2_test.bash f3_test.bash 2>&1 | tail -1)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$parallelOut_" "3/3"
+    [[ $serialOut_ != 3/3 ]] || { tesht.Log "control: serial run must not rendezvous, got $serialOut_"; return 1; }
+  END
+}
+
+# test_cli_p_caps_concurrency verifies -p N runs exactly N files at once, at
+# most and at least. Each file's test marks itself live, waits until two files
+# are live (or two have finished, for the last one), records how many are live,
+# then leaves. With -p 2 the highest count recorded must be exactly 2: serial
+# never reaches 2 (the first file's wait times out), and an uncapped run
+# records 3.
+test_cli_p_caps_concurrency() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local name
+  for name in f1 f2 f3; do
+    cat >${name}_test.bash <<END
+test_$name() {
+  touch \$LiveDir/$name
+  local -i try
+  for (( try = 0; try < 100; try++ )); do
+    (( \$(ls \$LiveDir | wc -l) >= 2 || \$(ls \$MarkDir | grep -c done) >= 2 )) && break
+    sleep 0.1
+  done
+  sleep 0.3
+  ls \$LiveDir | wc -l >\$MarkDir/$name.hw
+  sleep 0.3
+  rm \$LiveDir/$name
+  touch \$MarkDir/$name.done
+  (( try < 100 ))
+}
+END
+  done
+
+  local gotOut_
+  mkdir live marks
+  gotOut_=$(LiveDir=$dir/live MarkDir=$dir/marks $TESHT_PATHT -p 2 f1_test.bash f2_test.bash f3_test.bash 2>&1 | tail -1)
+
+  local highWater_
+  highWater_=$(cat marks/f1.hw marks/f2.hw marks/f3.hw | sort -n | tail -1)  # noglob: name them
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$gotOut_" '3/3'
+    tesht.AssertGot "$highWater_" '2'
+  END
+}
+
+# test_cli_p_flag_forms verifies each accepted spelling honors its value (two
+# files rendezvous only if both run at once) and each rejected one exits 2 with
+# its own message.
+test_cli_p_flag_forms() {
+  local -A case1=([name]='-p N'          [args]=$'-p\n2'          [wantOut]='2/2' [tries]=100)
+  local -A case2=([name]='-pN'           [args]='-p2'             [wantOut]='2/2' [tries]=100)
+  local -A case3=([name]='--file-jobs N' [args]=$'--file-jobs\n2' [wantOut]='2/2' [tries]=100)
+  local -A case4=([name]='--file-jobs=N' [args]='--file-jobs=2'   [wantOut]='2/2' [tries]=100)
+  local -A case5=([name]='-p 02 is decimal' [args]=$'-p\n02'      [wantOut]='2/2' [tries]=100)
+  local -A case6=([name]='-p 1 is serial'   [args]=$'-p\n1'       [wantOut]='1/2' [tries]=5)
+  local -A case7=([name]='-p 0 is serial'   [args]=$'-p\n0'       [wantOut]='1/2' [tries]=5)
+  local -A case8=([name]='-p=N'          [args]='-p=2'            [wantRC]=2 [wantErr]='-p=N is not supported')
+  local -A case9=([name]='-p word'       [args]=$'-p\nx'          [wantRC]=2 [wantErr]='got: x')
+
+  subtest() {
+    local casename=$1 wantOut='' wantRC=0 wantErr='' tries=5
+    eval "$(tesht.Inherit $casename)"
+
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+    barrierFile x 'x y' >$dir/x_test.bash
+    barrierFile y 'x y' >$dir/y_test.bash
+
+    ## act
+    local gotLines rc=0
+    gotLines=$(cd $dir && BarrierDir=$dir BarrierTries=$tries $TESHT_PATHT $args x_test.bash y_test.bash 2>$dir/err) || rc=$?
+
+    ## assert
+    if [[ -n $wantErr ]]; then
+      tesht.AssertRC $rc $wantRC
+      [[ $(<$dir/err) == *"$wantErr"* ]] || { tesht.Log "want stderr containing '$wantErr', got: $(<$dir/err)"; return 1; }
+    else
+      tesht.AssertGot "$(tail -1 <<<$gotLines)" $wantOut
+    fi
+  }
+
+  tesht.Run ${!case@}
+}
+
+# test_cli_p_after_files verifies -p is honored after the file arguments too.
+test_cli_p_after_files() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  barrierFile x 'x y' >x_test.bash
+  barrierFile y 'x y' >y_test.bash
+
+  local gotOut_
+  gotOut_=$(BarrierDir=$dir BarrierTries=100 $TESHT_PATHT x_test.bash y_test.bash -p 2 2>&1 | tail -1)
+
+  tesht.AssertGot "$gotOut_" '2/2'
+}
+
+# test_cli_p_composes_with_j verifies -p and -j multiply: four tests, two in
+# each of two files, rendezvous only when both files and both tests per file run
+# at once. -p 2 alone is the control: each file's two tests run one at a time.
+test_cli_p_composes_with_j() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local file
+  for file in a b; do
+    {
+      barrierFile ${file}1 'a1 a2 b1 b2'
+      echo "test_${file}2() { touch \$BarrierDir/${file}2; barrierWait 'a1 a2 b1 b2'; }"
+    } >${file}_test.bash
+  done
+
+  local bothOut_ filesOnlyOut_
+  mkdir both files
+  bothOut_=$(BarrierDir=$dir/both BarrierTries=100 $TESHT_PATHT -p 2 -j 2 a_test.bash b_test.bash 2>&1 | tail -1)
+  filesOnlyOut_=$(BarrierDir=$dir/files BarrierTries=5 $TESHT_PATHT -p 2 a_test.bash b_test.bash 2>&1 | tail -1)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$bothOut_" '4/4'
+    [[ $filesOnlyOut_ != 4/4 ]] || { tesht.Log "control: -p 2 alone must not rendezvous four tests, got $filesOnlyOut_"; return 1; }
+  END
+}
+
+# test_cli_p_with_temp_dirs verifies tests that use tesht.MktempDir keep their
+# own directories under -p and -j together: a worker's cleanup must not remove
+# another worker's results or temp dirs.
+test_cli_p_with_temp_dirs() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local file
+  for file in a b c d; do
+    {
+      local -i i
+      for (( i = 1; i <= 3; i++ )); do
+        printf 'test_%s%d() {\n  local d\n  tesht.MktempDir d || return 128\n  echo %s >$d/marker\n  sleep 0.2\n  [[ $(<$d/marker) == %s ]]\n}\n' $file $i $file $file
+      done
+    } >${file}_test.bash
+  done
+
+  local gotLines rc=0
+  gotLines=$($TESHT_PATHT -p 4 -j 2 a_test.bash b_test.bash c_test.bash d_test.bash 2>&1) || rc=$?
+
+  tesht.Softly <<'  END'
+    tesht.AssertRC $rc 0
+    tesht.AssertGot "$(tail -1 <<<$gotLines)" '12/12'
+  END
+}
+
+# test_testFiles_reports_a_killed_worker verifies a worker that dies without
+# reporting fails the run, while the other files' results still print.
+test_testFiles_reports_a_killed_worker() {
+  local gotLines rc=0
+  # shellcheck disable=SC2030,SC2031 # the stub runs in this $( ) on purpose: tesht.testFiles reads the counters it sets there
+  gotLines=$(
+    tesht.testFile() {
+      [[ $1 == b ]] && kill -9 $BASHPID
+      echo "ran $1"
+      (( TestCountT += 1 ))
+      (( PassCountT += 1 ))
+    }
+    local -i TestCountT=0 PassCountT=0 SkipCountT=0 CacheT=0  # in-process: not the outer run's --cache
+    tesht.testFiles '' 1 3 a b c && rc=$? || rc=$?
+    echo "rc=$rc counts=$PassCountT/$TestCountT"
+  )
+
+  tesht.AssertGot "$gotLines" $'ran a\nran c\nrc=1 counts=2/2'
+}
+
+# test_testFiles_reports_an_early_exit verifies a worker whose file exits early
+# still reports the counts it had and fails the run, while the other files print.
+test_testFiles_reports_an_early_exit() {
+  local gotLines rc=0
+  # shellcheck disable=SC2030,SC2031 # the stub runs in this $( ) on purpose: tesht.testFiles reads the counters it sets there
+  gotLines=$(
+    tesht.testFile() {
+      (( TestCountT += 1 ))
+      (( PassCountT += 1 ))
+      [[ $1 == b ]] && exit 3
+      echo "ran $1"
+    }
+    local -i TestCountT=0 PassCountT=0 SkipCountT=0 CacheT=0  # in-process: not the outer run's --cache
+    tesht.testFiles '' 1 3 a b c && rc=$? || rc=$?
+    echo "rc=$rc counts=$PassCountT/$TestCountT"
+  )
+
+  tesht.AssertGot "$gotLines" $'ran a\nran c\nrc=1 counts=3/3'
+}
+
+# test_cli_p_term_leaves_no_processes verifies TERM to a -p run stops every
+# process its tests started, even a test that keeps respawning children.
+test_cli_p_term_leaves_no_processes() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local marker=29.$RANDOM
+  local name
+  for name in r1 r2; do
+    echo "test_$name() { touch $dir/$name.up; while :; do sleep $marker & wait; done; }" >${name}_test.bash
+  done
+
+  $TESHT_PATHT -p 2 r1_test.bash r2_test.bash >/dev/null 2>&1 &
+  local -i pid=$! try
+  for (( try = 0; try < 100; try++ )); do
+    [[ -e r1.up && -e r2.up ]] && break
+    sleep 0.1
+  done
+  [[ -e r1.up && -e r2.up ]] || { kill $pid 2>/dev/null; tesht.Log 'both files must be running before TERM'; return 1; }
+  sleep 0.3
+  kill -TERM $pid
+  wait $pid
+  sleep 0.5
+
+  local -i survivors
+  survivors=$(pgrep -fc "^sleep $marker\$" || true)
+  (( survivors == 0 )) || { pkill -f "^sleep $marker\$"; tesht.Log "survivors: $survivors"; return 1; }
+}
+
+# test_cli_p_workers_read_dev_null verifies a worker's tests read stdin from
+# /dev/null, as in a serial background run, not the caller's input.
+test_cli_p_workers_read_dev_null() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cd $dir
+
+  local name
+  for name in a b; do
+    echo "test_$name() { local line=''; read -r line; [[ -z \$line ]]; }" >${name}_test.bash
+  done
+
+  local gotOut_
+  gotOut_=$(echo caller input | $TESHT_PATHT -p 2 a_test.bash b_test.bash 2>&1 | tail -1)
+
+  tesht.AssertGot "$gotOut_" '2/2'
+}
+
+# test_liveWorkers_ignores_pids_that_are_not_running_jobs verifies the stop
+# targets only this shell's running jobs: a pid that is not one (a finished
+# worker's, possibly reused by another process) is never signalled.
+test_liveWorkers_ignores_pids_that_are_not_running_jobs() {
+  local gotLines
+  gotLines=$(
+    sleep 5 &
+    local job=$!
+    echo "job=$(tesht.liveWorkers $job) other=$(tesht.liveWorkers $$)"
+    kill $job
+  )
+
+  [[ $gotLines =~ ^job=[0-9]+\ other=$ ]] || { tesht.Log "want the job listed and the other pid not, got: $gotLines"; return 1; }
+}
+
+# test_workerCounts_requires_five_integers verifies a worker's counter file is
+# trusted only when complete: a truncated one counts as a failed worker.
+test_workerCounts_requires_five_integers() {
+  local -A case1=([name]='complete'  [content]='3 3 0 0 0' [wantRC]=0)
+  local -A case2=([name]='truncated' [content]='3 3'       [wantRC]=1)
+  local -A case3=([name]='garbage'   [content]='3 x 0 0 0' [wantRC]=1)
+
+  subtest() {
+    local casename=$1
+    eval "$(tesht.Inherit $casename)"
+
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+    echo $content >$dir/0.cnt
+
+    ## act
+    local rc=0
+    tesht.workerCounts $dir/0.cnt >/dev/null || rc=$?
+
+    ## assert
+    tesht.AssertRC $rc $wantRC
+  }
+
+  tesht.Run ${!case@}
+}
+
+# barrierFile prints a test file whose one test, test_`name`, marks itself in
+# $BarrierDir and then waits for every mark in `waitFor` (space-separated; empty
+# waits for nothing). barrierWait tries $BarrierTries times, 0.1s apart.
+barrierFile() {
+  local name=$1 waitFor=$2
+  echo "test_$name() { touch \$BarrierDir/$name; barrierWait '$waitFor'; }"
+  cat <<'  END'
+  barrierWait() {
+    local -i try ready
+    local mark IFS=' '  # tesht runs test sources under IFS=$'\n'; the marks are space-separated
+    for (( try = 0; try < BarrierTries; try++ )); do
+      ready=1
+      for mark in $1; do
+        [[ -e $BarrierDir/$mark ]] || ready=0
+      done
+      (( ready )) && return 0
+      sleep 0.1
+    done
+    return 1
+  }
+  END
+}
+
+# normalizeRun strips what legitimately differs between runs of the same files:
+# colors, durations and carriage-return progress lines.
+normalizeRun() {
+  tr '\r' '\n' <<<$1 | sed 's/\x1b\[[0-9;]*m//g; s/[0-9][0-9]*ms/Nms/g' | grep -v '^[[:space:]]*$'
+}
+
 ## helpers
 
 echoLines() {

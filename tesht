@@ -34,6 +34,9 @@ Usage:
                         (also --run=REGEXP; empty regex matches all tests)
     -j N | --jobs N     run up to N tests concurrently within each file
                         (also -jN and --jobs=N; default: 1 = serial)
+    -p N | --file-jobs N  run up to N test files concurrently
+                        (also -pN and --file-jobs=N; default: 1 = serial;
+                        output stays in file order; composes with -j)
     -h | --help         show this message and exit
     -x | --trace        enable debug tracing
     --                  stop option processing
@@ -83,17 +86,22 @@ UnixMilliFuncT=tesht.UnixMilli
 #
 # Args: $1 = test-name regex filter (empty = match all);
 #       $2 = newline-separated list of test files (typically built via tesht.ListOf);
-#       $3 = within-file parallelism (default 1 = serial; -j N flag, #37833).
+#       $3 = within-file parallelism (default 1 = serial; -j N flag, #37833);
+#       $4 = cross-file parallelism (default 1 = serial; -p N flag).
 tesht.Main() {
   local runRegexp_=${1:-} filenames=( ${2:-} )
-  local -i jobs=${3:-1}
+  local -i jobs=${3:-1} fileJobs=${4:-1}
 
   local -i PassCountT=0 TestCountT=0 SkipCountT=0 failed=0   # -i enables arithmetic operations
   local -i startTime=$($UnixMilliFuncT)
 
-  for filename in "${filenames[@]}"; do
-    tesht.testFile $filename "$runRegexp_" $jobs || failed=1
-  done
+  if (( fileJobs <= 1 || ${#filenames[@]} <= 1 )); then
+    for filename in "${filenames[@]}"; do
+      tesht.testFile $filename "$runRegexp_" $jobs || failed=1
+    done
+  else
+    tesht.testFiles "$runRegexp_" $jobs $fileJobs "${filenames[@]}" || failed=1
+  fi
 
   (( TestCountT > 0 || SkipCountT > 0 )) || failed=2
 
@@ -682,6 +690,165 @@ tesht.testFile() {
   return $failed
 }
 
+# tesht.testFiles runs the given files concurrently, at most fileJobs at a time.
+# Each worker runs one file through tesht.testFile, capturing its stdout and
+# stderr to per-file buffers and, from its EXIT trap, its counter deltas and exit
+# status to a per-file counter file, so a worker that exits early still reports.
+# After all workers finish, each file's stdout and stderr are replayed to fds 1
+# and 2 in argument order and the deltas accumulated, so results, totals and exit
+# code match the serial run; only wall-clock changes. A worker that left no
+# counter file counts as a failure. It composes with -j: a worker's file may run
+# its own tests across `jobs` workers (a worker starts with an empty job table).
+# On INT, TERM or HUP it stops each worker's process group before exiting,
+# and on return it restores the caller's own traps for those signals.
+#
+# Args: $1 = test-name regex filter; $2 = within-file jobs; $3 = file jobs;
+#       $4... = test files.
+tesht.testFiles() {
+  local runRegexp_=$1
+  local -i jobs=$2 fileJobs=$3
+  local -a files=( "${@:4}" ) workers=()
+
+  local parDir_
+  parDir_=$(mktemp -d -t tesht.files.XXXXXX) && [[ -n $parDir_ ]] ||
+    { echo 'tesht.testFiles: could not create results directory' >&2; return 1; }
+  local parDir=$parDir_ quotedDir
+  printf -v quotedDir '%q' $parDir
+  # Restore the caller's own INT/TERM/HUP traps afterwards; tesht can be sourced.
+  local callerTrapLines
+  callerTrapLines=$(trap -p INT TERM HUP)
+  local callerMonitor=+m
+  [[ $- == *m* ]] && callerMonitor=-m
+  # Only workers still running are stopped: a reaped worker's pid may belong to someone else now.
+  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]}); rm -rf -- '$quotedDir'; exit 130' INT
+  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]}); rm -rf -- '$quotedDir'; exit 143' TERM
+  trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]}); rm -rf -- '$quotedDir'; exit 129' HUP
+
+  local -i idx
+  for (( idx = 0; idx < ${#files[@]}; idx++ )); do
+    while (( $(jobs -pr | wc -l) >= fileJobs )); do
+      wait -n 2>/dev/null || true
+    done
+    # With job control on for the spawn, the worker leads its own process group, so
+    # stopping it reaches every process its tests start, even ones reparented after
+    # their parent died. The worker turns job control off at once, so its own -j
+    # jobs and test processes stay in its group.
+    set -m
+    (
+      set +m
+      # A worker reports from its own EXIT trap and does not run the parent's.
+      trap - INT TERM HUP
+      # shellcheck disable=SC2030 # worker-local counters; their deltas return through the .cnt file
+      local -i TestCountT=0 PassCountT=0 SkipCountT=0 failed=0 rc=0 workerPid=$BASHPID
+      # The test subshells below inherit this trap; only the worker itself reports.
+      trap 'st=$?; [[ $BASHPID != '$workerPid' ]] || { (( rc != 0 || st == 0 )) || { rc=$st; failed=1; }; echo "$TestCountT $PassCountT $failed $SkipCountT $rc" >'$quotedDir/$idx.cnt.tmp' && mv -- '$quotedDir/$idx.cnt.tmp' '$quotedDir/$idx.cnt'; }' EXIT
+      tesht.testFile ${files[idx]} "$runRegexp_" $jobs >$parDir/$idx.out 2>$parDir/$idx.err && rc=$? || rc=$?
+      (( rc == 0 )) || failed=1
+    ) </dev/null &
+    workers+=( $! )
+    set $callerMonitor
+  done
+  wait
+  # Through the replay, an interrupt only removes the results directory.
+  trap 'rm -rf -- '$quotedDir'; exit 130' INT
+  trap 'rm -rf -- '$quotedDir'; exit 143' TERM
+  trap 'rm -rf -- '$quotedDir'; exit 129' HUP
+
+  local -i tc pc f sc wrc failed=0
+  local counts_=''
+  # shellcheck disable=SC2031 # the parent's own counters; workers' copies were never meant to reach here
+  for (( idx = 0; idx < ${#files[@]}; idx++ )); do
+    cat -- $parDir/$idx.out 2>/dev/null || true
+    cat -- $parDir/$idx.err >&2 2>/dev/null || true
+    tc=0; pc=0; f=1; sc=0; wrc=1  # a worker that left no well-formed counts failed
+    if counts_=$(tesht.workerCounts $parDir/$idx.cnt); then
+      IFS=' ' read -r tc pc f sc wrc <<<"$counts_"
+    fi
+    TestCountT+=$tc
+    PassCountT+=$pc
+    SkipCountT+=$sc
+    (( f || wrc != 0 )) && failed=1
+  done
+  rm -rf -- $parDir
+  trap - INT TERM HUP
+  [[ -z "$callerTrapLines" ]] || eval "$callerTrapLines"
+
+  return $failed
+}
+
+# tesht.liveWorkers prints the given pids that are still running jobs of this shell.
+tesht.liveWorkers() {
+  local live_ pid
+  live_=$(jobs -pr)
+  for pid in "$@"; do
+    grep -qx -- $pid <<<"$live_" && echo $pid
+  done
+  return 0
+}
+
+# tesht.workerCounts prints a worker's counter file when it holds exactly five
+# non-negative integers, or fails.
+tesht.workerCounts() {
+  local file=$1 counts_
+  [[ -f $file ]] && counts_=$(<$file) || return 1
+  [[ "$counts_" =~ ^[0-9]+\ [0-9]+\ [0-9]+\ [0-9]+\ [0-9]+$ ]] || return 1
+  echo "$counts_"
+}
+
+# tesht.stopGroups stops each worker and everything it started: TERM and CONT to
+# each worker's process group (which catches children reparented after their
+# parent died) and to every descendant found by walking the tree (which catches
+# children that left the group), up to two seconds to exit, then KILL to what is
+# left. It never signals tesht's own group, which may include tesht's caller. A
+# process that both left its group and was reparented (a daemon) is out of reach.
+tesht.stopGroups() {
+  local -a groups=() tree=() found
+  local pid
+  for pid in "$@"; do
+    kill -0 -- -$pid 2>/dev/null && groups+=( -$pid )
+    mapfile -t found < <(tesht.descendants $pid)
+    tree+=( ${found[@]+"${found[@]}"} )
+  done
+  (( ${#groups[@]} + ${#tree[@]} > 0 )) || return 0
+  kill -TERM -- ${groups[@]} ${tree[@]} 2>/dev/null || true
+  kill -CONT -- ${groups[@]} ${tree[@]} 2>/dev/null || true
+  local -i try alive
+  local target
+  for (( try = 0; try < 20; try++ )); do
+    alive=0
+    for target in ${groups[@]} ${tree[@]}; do
+      kill -0 -- $target 2>/dev/null && alive=1
+    done
+    (( alive )) || return 0
+    sleep 0.1
+  done
+  kill -KILL -- ${groups[@]} ${tree[@]} 2>/dev/null || true
+}
+
+# tesht.descendants prints pid and all its descendants, depth first, reading each
+# process's children from every one of its threads under /proc, or from ps where
+# /proc is absent.
+tesht.descendants() {
+  local pid=$1 child
+  echo $pid
+  for child in $(tesht.childPids $pid); do
+    tesht.descendants $child
+  done
+}
+
+# tesht.childPids prints the pids of pid's children.
+tesht.childPids() {
+  local pid=$1
+  if [[ -r /proc/$pid/task/$pid/children ]]; then
+    local task=''  # noglob is on: read the thread list rather than globbing it
+    while IFS= read -r task; do
+      cat /proc/$pid/task/$task/children 2>/dev/null
+    done < <(ls /proc/$pid/task 2>/dev/null) | tr ' ' '\n' | grep . || true
+  else
+    ps -A -o pid=,ppid= 2>/dev/null | awk -v p=$pid '$2 == p { print $1 }'
+  fi
+}
+
 # tesht.UnixMilli returns the current time in Unix time as milliseconds.
 tesht.UnixMilli() {
   local whole='' fraction=''
@@ -696,6 +863,7 @@ tesht.UnixMilli() {
 RunRegexpT_=''
 FilenamesT=()
 JobsT=1
+FileJobsT=1
 while (( $# )); do
   case $1 in
     -h|--help)  echo "$Usage_"; exit;;
@@ -723,12 +891,31 @@ while (( $# )); do
       [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: --jobs requires a non-negative integer, got: $JobsT" >&2; exit 2; }
       shift
       ;;
+    -p|--file-jobs)
+      [[ ${2-} =~ ^[0-9]{1,4}$ ]] || { echo "error: $1 requires a non-negative integer below 10000, got: ${2-}" >&2; exit 2; }
+      FileJobsT=$(( 10#$2 )); shift 2
+      ;;
+    -p=*)
+      echo 'error: -p=N is not supported; use -p N or --file-jobs=N' >&2; exit 2;;
+    -p?*)
+      FileJobsT=${1#-p}
+      [[ $FileJobsT =~ ^[0-9]{1,4}$ ]] || { echo "error: -p requires a non-negative integer below 10000, got: $FileJobsT" >&2; exit 2; }
+      FileJobsT=$(( 10#$FileJobsT ))
+      shift
+      ;;
+    --file-jobs=*)
+      FileJobsT=${1#--file-jobs=}
+      [[ $FileJobsT =~ ^[0-9]{1,4}$ ]] || { echo "error: --file-jobs requires a non-negative integer below 10000, got: $FileJobsT" >&2; exit 2; }
+      FileJobsT=$(( 10#$FileJobsT ))
+      shift
+      ;;
     --)         shift; FilenamesT+=( "$@" ); break;;
     -*)         echo "error: unknown option: $1" >&2; exit 2;;
     *)          FilenamesT+=( "$1" ); shift;;
   esac
 done
 (( JobsT > 0 )) || JobsT=1   # treat -j 0 as serial (defensive)
+(( FileJobsT > 0 )) || FileJobsT=1   # and -p 0
 
 # Inverted file-look guard — 4-branch table:
 #   directory -> expand to shallow *_test.bash files (branch 1)
@@ -770,4 +957,4 @@ fi
 return 2>/dev/null
 set -euf
 
-tesht.Main "$RunRegexpT_" "$(tesht.ListOf "${FilenamesT[@]}")" $JobsT
+tesht.Main "$RunRegexpT_" "$(tesht.ListOf "${FilenamesT[@]}")" $JobsT $FileJobsT
