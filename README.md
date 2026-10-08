@@ -86,6 +86,7 @@ discovery and clear failure reporting.
     tesht --run TestMyFunction         # filter test names by regex
     tesht myScript_test.bash --run TestFoo # file + name filter
     tesht -j 4 myScript_test.bash      # run up to 4 tests at once within the file
+    tesht -p 4 dir/                    # run up to 4 test files at once
     ```
 
     Positional args are test files or directories; `--run REGEXP` (or `--run=REGEXP`) filters by name (bash native regex). Directories expand to `*_test.bash` one level deep (shallow). Options use POSIX/GNU syntax and may come before or after the files; see `tesht --help`.

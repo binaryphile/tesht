@@ -23,6 +23,7 @@ tesht my_test.bash --run TestFoo   # file + name filter
 tesht --run=TestFoo my_test.bash   # equals-syntax variant
 tesht -j 4 my_test.bash            # run up to 4 tests concurrently within the file
 tesht -j "$(nproc)"                # one worker per CPU
+tesht -p 4 dir/                    # run up to 4 test files at once
 tesht -x                           # trace mode for debugging
 ```
 
@@ -78,6 +79,23 @@ Caveats:
   whole file completes.
 - **Stable exit codes.** A failure in any worker propagates to the file's
   `failed` flag and to `tesht.Main`'s overall exit code, same as serial.
+
+## Cross-file parallelism: `-p N`
+
+`-p N` (also `-pN`, `--file-jobs N`, `--file-jobs=N`) runs up to N test files
+at once; the default is serial. Each file runs in a worker that buffers its
+stdout, stderr and counts; the parent replays them in argument order, so
+results, totals and exit code match the serial run. `-p` and `-j` compose:
+`tesht -p 4 -j 4 dir/` keeps up to 16 tests in flight. Ctrl-C stops the
+workers.
+
+Caveats: files must be isolated from each other (no fixed paths outside a temp
+dir, no fixed ports, no functions one file leaves for the next); output appears
+only when all files finish (with more than one file), each file's stderr after its stdout; workers read
+stdin from `/dev/null`; tests asserting on elapsed time see more host load.
+Each worker runs in its own process group: Ctrl-C or TERM to tesht stops the
+workers and everything they started, but `kill -KILL` to tesht cannot, and a
+daemon that left its group and parent is out of reach.
 
 ## Test discovery
 
