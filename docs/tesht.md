@@ -101,6 +101,28 @@ from or configures the controlling terminal (`/dev/tty`, `stty`) stops under
 `-p`; run such files serially. A sourcing caller's own background jobs neither
 take worker slots nor delay the result.
 
+## Result caching: `--cache`
+
+With `--cache`, tesht stores each fully passing file's results and, when nothing
+the file could read has changed, replays them instead of running it, marked
+`--- CACHED <file>`. The key covers the tesht binary, bash's version, the
+working directory, the file, its git repo's HEAD, index, tracked changes and
+untracked files, `-j`, `--run`, `TESHT_NO_SKIP` and `TESHT_CACHE_KEY`; the key
+is checked again after the run, so a file edited mid-run is not stored.
+Failures are never stored, and `-x` always runs. Entries live, private to you,
+in `${XDG_CACHE_HOME:-~/.cache}/tesht/` and accumulate; delete it to start over.
+
+Caching is opt-in because the key cannot see what a test reads outside the
+repo's tracked and untracked files: ignored files (build outputs, `.env`), a
+server, the network, tools on PATH. Pass those in `TESHT_CACHE_KEY` (for
+example, tool versions), or leave `--cache` off for such suites. A file outside
+any git work tree runs uncached, with a warning. Under `--cache` a file's output
+appears when it finishes, run or replayed. Also outside the key: edits inside an
+already dirty submodule and paths marked assume-unchanged or skip-worktree.
+Skipped tests are stored like passes, though a skip's reason may lie outside
+the key. A symlinked test file is keyed by its target's repo. Touching a
+tracked file without changing it can cause a miss, never a stale hit.
+
 ## Test discovery
 
 Test files end in `_test.bash`. Test functions are named `test_*`. Tesht
