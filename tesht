@@ -955,9 +955,10 @@ tesht.cacheKey() {
   local path_ root_
   path_=$(realpath -- $filename 2>/dev/null) && [[ -n "$path_" ]] || return 0
   root_=$(tesht.git "${path_%/*}" rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root_" ]] || return 0
-  local inputLines
-  inputLines=$(
+  local key_
+  key_=$(
     set -o pipefail
+    (
     local teshtSum_ fileSum_
     teshtSum_=$(sha256sum <$TeshtPathT) && echo "tesht $teshtSum_" &&
     echo "bash $BASH_VERSION" &&
@@ -966,13 +967,27 @@ tesht.cacheKey() {
     echo "head $(tesht.git "$root_" rev-parse --verify -q HEAD || echo none)" &&
     tesht.git "$root_" ls-files -s &&
     tesht.git "$root_" diff-files -p --binary --no-ext-diff --ignore-submodules=none &&
-    tesht.git "$root_" ls-files -o --exclude-standard -z | (cd "$root_" && xargs -0 -r sha256sum --) &&
+    tesht.git "$root_" ls-files -o --exclude-standard -z | (cd "$root_" && tesht.untrackedInputs) &&
     echo "jobs $jobs" &&
     echo "run $runRegexp_" &&
     echo "noskip ${TESHT_NO_SKIP:-}" &&   # one labeled line each: an empty value must not shift the next
     echo "extra ${TESHT_CACHE_KEY:-}"
+    ) | sha256sum | cut -d ' ' -f 1  # streamed: a $(...) capture would drop NUL bytes
   ) || return 0
-  sha256sum <<<"$inputLines" | cut -d ' ' -f 1
+  echo "$key_"
+}
+
+# tesht.untrackedInputs reads NUL-separated paths and prints each one's type,
+# mode and link target, plus the content hash of each regular file (other
+# types are never read, so a FIFO cannot block).
+tesht.untrackedInputs() {
+  local path=''
+  while IFS= read -r -d '' path; do
+    stat -c '%A %F %N' -- $path || return 1  # a name with a newline splits, fails here, and leaves no key
+    if [[ -f $path && ! -L $path ]]; then
+      sha256sum -- $path || return 1
+    fi
+  done
 }
 
 # tesht.UnixMilli returns the current time in Unix time as milliseconds.

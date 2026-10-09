@@ -1418,11 +1418,11 @@ normalizeRun() {
 cacheRepo() {
   local dir=$1 body=${2:-:}
   mkdir $dir/repo
-  git -C $dir/repo init -q
+  git -C $dir/repo init -q --template=
   echo "test_a() { echo ran >>$dir/runs; $body; }" >$dir/repo/a_test.bash
   echo helper >$dir/repo/lib.txt
   git -C $dir/repo add -A
-  git -C $dir/repo -c user.name=t -c user.email=t@t commit -qm first
+  git -C $dir/repo -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm first
 }
 
 # runCached runs tesht --cache (plus `args`) on a_test.bash in `dir`/repo with
@@ -1464,22 +1464,24 @@ test_cli_cache_misses_when_an_input_changes() {
   local -A case1=([name]='test file edited'     [change]='echo "test_b() { :; }" >>a_test.bash')
   local -A case2=([name]='other tracked file'   [change]='echo x >other.txt; git add other.txt')
   local -A case3=([name]='untracked file'       [change]='echo x >scratch.txt')
-  local -A case4=([name]='new commit'           [change]='echo y >more.txt; git add more.txt; git -c user.name=t -c user.email=t@t commit -qm second')
+  local -A case4=([name]='new commit'           [change]='echo y >more.txt; git add more.txt; git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm second')
   local -A case5=([name]='--run filter'         [change]=':' [runArgs]=$'--run\ntest_a')
   local -A case6=([name]='TESHT_CACHE_KEY'      [change]=':' [env]='TESHT_CACHE_KEY=v2')
   local -A case7=([name]='TESHT_NO_SKIP'        [change]=':' [env]='TESHT_NO_SKIP=1')
   local -A case8=([name]='-j value'             [change]=':' [runArgs]=$'-j\n2')
   local -A case10=([name]='tracked file edited, unstaged' [change]='echo x >>lib.txt')
   local -A case9=([name]='-x trace mode'        [change]=':' [runArgs]='-x')
+  local -A case11=([name]='untracked file mode' [change]='chmod -x tool.sh' [setup]='printf "#!/bin/sh\n" >tool.sh; chmod +x tool.sh')
 
   subtest() {
-    local casename=$1 runArgs='' env=''
+    local casename=$1 runArgs='' env='' setup=':'
     eval "$(tesht.Inherit $casename)"
 
     ## arrange
     local dir
     tesht.MktempDir dir || return 128
     cacheRepo $dir
+    (cd $dir/repo && eval $setup)
     runCached $dir >/dev/null
     runCached $dir >/dev/null
     # Unchanged, the second run is a hit: a miss below is caused by the change.
@@ -1537,10 +1539,12 @@ test_cli_cache_outside_git_runs_uncached() {
   tesht.MktempDir dir || return 128
   mkdir $dir/plain
   echo "test_a() { echo ran >>$dir/runs; }" >$dir/plain/a_test.bash
+  # Precondition: the temp dir is outside every git work tree (tesht ignores GIT_CEILING_DIRECTORIES).
+  ! git -C $dir/plain rev-parse --is-inside-work-tree >/dev/null 2>&1 || { tesht.Log "precondition: $dir is inside a git work tree"; return 128; }
 
   local errLines
-  (cd $dir/plain && XDG_CACHE_HOME=$dir/cache GIT_CEILING_DIRECTORIES=$dir $TESHT_PATHT --cache a_test.bash >/dev/null 2>$dir/err)
-  (cd $dir/plain && XDG_CACHE_HOME=$dir/cache GIT_CEILING_DIRECTORIES=$dir $TESHT_PATHT --cache a_test.bash >/dev/null 2>&1)
+  (cd $dir/plain && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache a_test.bash >/dev/null 2>$dir/err)
+  (cd $dir/plain && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache a_test.bash >/dev/null 2>&1)
   errLines=$(<$dir/err)
 
   tesht.Softly <<'  END'
@@ -1607,7 +1611,7 @@ test_cli_cache_misses_an_unstaged_edit_before_any_commit() {
   local dir
   tesht.MktempDir dir || return 128
   mkdir $dir/repo
-  git -C $dir/repo init -q
+  git -C $dir/repo init -q --template=
   echo "test_a() { echo ran >>$dir/runs; }" >$dir/repo/a_test.bash
   echo helper >$dir/repo/lib.txt
   git -C $dir/repo add -A
@@ -1700,10 +1704,72 @@ test_git_ignores_inherited_locations() {
 
   ## act
   local got_
-  got_=$(GIT_COMMON_DIR=$dir/nowhere GIT_OBJECT_DIRECTORY=$dir/nowhere tesht.git $dir/repo rev-parse --show-toplevel 2>&1)
+  git init -q --template= $dir/other
+  got_=$(GIT_DIR=$dir/other/.git GIT_WORK_TREE=$dir/other GIT_INDEX_FILE=$dir/other/.git/index GIT_COMMON_DIR=$dir/nowhere GIT_OBJECT_DIRECTORY=$dir/nowhere tesht.git $dir/repo rev-parse --show-toplevel 2>&1)
 
   ## assert
   tesht.AssertGot "$got_" "$(realpath $dir/repo)"
+}
+
+# test_cacheKey_fails_closed_when_the_file_cannot_be_read verifies an unreadable
+# test file yields no key.
+test_cacheKey_fails_closed_when_the_file_cannot_be_read() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  chmod 000 $dir/repo/a_test.bash
+  [[ ! -r $dir/repo/a_test.bash ]] || return 128  # root reads anything
+
+  ## act
+  local got_
+  got_=$(TeshtPathT=$TESHT_PATHT; tesht.cacheKey $dir/repo/a_test.bash '' 1 2>/dev/null)
+  chmod 644 $dir/repo/a_test.bash
+
+  ## assert
+  tesht.AssertGot "$got_" ''
+}
+
+# test_cli_cache_dir_with_a_space verifies a cache path holding a space is used
+# as one path: the second run is a hit and nothing is made beside it.
+test_cli_cache_dir_with_a_space() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  mkdir "$dir/my cache"
+
+  ## act
+  local i
+  for i in 1 2; do
+    (cd $dir/repo && XDG_CACHE_HOME="$dir/my cache" $TESHT_PATHT --cache a_test.bash >/dev/null 2>&1)
+  done
+
+  ## assert
+  local entries_
+  entries_=$(ls -A $dir | LC_ALL=C sort | paste -sd ' ')
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$(runCount $dir)" '1'
+    tesht.AssertGot "$entries_" 'my cache repo runs'
+    [[ ! -e $dir/repo/cache ]] || { tesht.Log 'a cache dir was made in the repo'; return 1; }
+  END
+}
+
+# test_cli_cache_does_not_read_an_untracked_fifo verifies an untracked FIFO is
+# keyed by its type and never opened, so the run does not block.
+test_cli_cache_does_not_read_an_untracked_fifo() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  mkfifo $dir/repo/pipe
+
+  ## act
+  local rc=0
+  (cd $dir/repo && XDG_CACHE_HOME=$dir/cache timeout 20 $TESHT_PATHT --cache a_test.bash >/dev/null 2>&1) || rc=$?
+
+  ## assert
+  tesht.AssertRC $rc 0
 }
 
 ## helpers
