@@ -1748,7 +1748,7 @@ test_cli_cache_dir_with_a_space() {
 
   ## assert
   local entries_
-  entries_=$(ls -A $dir | LC_ALL=C sort | paste -sd ' ')
+  entries_=$(find $dir -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | paste -sd ' ')
   tesht.Softly <<'  END'
     tesht.AssertGot "$(runCount $dir)" '1'
     tesht.AssertGot "$entries_" 'my cache repo runs'
