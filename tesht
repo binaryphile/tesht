@@ -34,6 +34,10 @@ Usage:
                         (also --run=REGEXP; empty regex matches all tests)
     -j N | --jobs N     run up to N tests concurrently within each file
                         (also -jN and --jobs=N; default: 1 = serial)
+    --cache             replay a fully passing file's stored results when its
+                        key is unchanged: tesht, bash, cwd, the file, its git
+                        repo's tracked and untracked (not ignored) files, -j,
+                        --run, TESHT_NO_SKIP, TESHT_CACHE_KEY; never under -x
     -p N | --file-jobs N  run up to N test files concurrently
                         (also -pN and --file-jobs=N; N below 10000; default: 1 = serial;
                         output stays in file order; composes with -j)
@@ -97,7 +101,7 @@ tesht.Main() {
 
   if (( fileJobs <= 1 || ${#filenames[@]} <= 1 )); then
     for filename in "${filenames[@]}"; do
-      tesht.testFile $filename "$runRegexp_" $jobs || failed=1
+      tesht.runFile $filename "$runRegexp_" $jobs || failed=1
     done
   else
     tesht.testFiles "$runRegexp_" $jobs $fileJobs "${filenames[@]}" || failed=1
@@ -743,7 +747,7 @@ tesht.testFiles() {
       local -i TestCountT=0 PassCountT=0 SkipCountT=0 failed=0 rc=0 workerPid=$BASHPID
       # The test subshells below inherit this trap; only the worker itself reports.
       trap 'st=$?; [[ $BASHPID != '$workerPid' ]] || { (( rc != 0 || st == 0 )) || { rc=$st; failed=1; }; echo "$TestCountT $PassCountT $failed $SkipCountT $rc" >'$quotedDir/$idx.cnt.tmp' && mv -- '$quotedDir/$idx.cnt.tmp' '$quotedDir/$idx.cnt'; }' EXIT
-      tesht.testFile ${files[idx]} "$runRegexp_" $jobs >$parDir/$idx.out 2>$parDir/$idx.err && rc=$? || rc=$?
+      tesht.runFile ${files[idx]} "$runRegexp_" $jobs >$parDir/$idx.out 2>$parDir/$idx.err && rc=$? || rc=$?
       (( rc == 0 )) || failed=1
     ) </dev/null &
     workers+=( $! )
@@ -861,6 +865,116 @@ tesht.childPids() {
   fi
 }
 
+# tesht.runFile runs one file through tesht.testFile, or, under --cache, replays
+# a stored passing run of it when its cache key matches. A run is stored only when
+# it passed in full and the key is the same after the run as before it (nothing
+# it could read changed while it ran). An entry is written into a temp dir inside
+# the cache dir, its counts last, and renamed into place, so a reader never sees a
+# partial entry; a reader that cannot read all of an entry runs the file instead.
+tesht.runFile() {
+  local filename=$1 runRegexp_=$2
+  local -i jobs=$3
+  # Without --cache, or under -x (a replay would print untraced output), run the file.
+  (( CacheT )) && [[ $- != *x* ]] || { tesht.testFile $filename "$runRegexp_" $jobs; return; }
+
+  local key_
+  key_=$(tesht.cacheKey $filename "$runRegexp_" $jobs)
+  if [[ -z "$key_" ]]; then
+    echo "tesht: --cache: no cache key for $filename (not in a git work tree, or git failed); running it uncached" >&2
+    tesht.testFile $filename "$runRegexp_" $jobs
+    return
+  fi
+  local entry=$CacheDirT/$key_
+  if tesht.replayEntry $entry $filename; then
+    return 0
+  fi
+  [[ ! -e $entry ]] || rm -rf -- $entry  # a partial or foreign entry is replaced by this run's
+  find $CacheDirT -maxdepth 1 -name '.tmp.*' -mmin +1440 -exec rm -rf -- {} + 2>/dev/null || true  # interrupted runs' leftovers
+
+  local -i tc0=$TestCountT pc0=$PassCountT sc0=$SkipCountT rc=0
+  local work_
+  work_=$( (umask 077; mkdir -p -- $CacheDirT && mktemp -d -- $CacheDirT/.tmp.XXXXXX) 2>/dev/null ) && [[ -n "$work_" ]] || {
+    echo "tesht: --cache: cannot write $CacheDirT; running $filename uncached" >&2
+    tesht.testFile $filename "$runRegexp_" $jobs
+    return
+  }
+  tesht.testFile $filename "$runRegexp_" $jobs >"$work_"/out 2>"$work_"/err && rc=$? || rc=$?
+  cat -- "$work_"/out
+  cat -- "$work_"/err >&2
+  local after_
+  after_=$(tesht.cacheKey $filename "$runRegexp_" $jobs)
+  if (( rc == 0 && PassCountT - pc0 == TestCountT - tc0 )) && [[ "$after_" == "$key_" ]]; then
+    echo "$(( TestCountT - tc0 )) $(( PassCountT - pc0 )) $(( SkipCountT - sc0 ))" >"$work_"/cnt
+    mv -T -- "$work_" $entry 2>/dev/null || rm -rf -- "$work_"  # an existing entry stays
+  else
+    rm -rf -- "$work_"
+  fi
+  return $rc
+}
+
+# tesht.git runs git on the repo at dir, ignoring every repository-location
+# variable inherited from a caller (a git hook, say) that would point the key at
+# another repository, index or object store.
+tesht.git() {
+  local dir=$1
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE \
+    -u GIT_CEILING_DIRECTORIES -u GIT_DISCOVERY_ACROSS_FILESYSTEM \
+    git -C $dir "${@:2}"
+}
+
+# tesht.replayEntry replays a complete cache entry for filename and adds its counts,
+# or returns 1, printing nothing, when the entry is absent, partial or unreadable.
+tesht.replayEntry() {
+  local entry=$1 filename=$2
+  [[ -O $CacheDirT && -O $entry && -O $entry/cnt && -O $entry/out && -O $entry/err ]] || return 1  # yours, complete
+  [[ -r $entry/out && -r $entry/err ]] || return 1
+  local counts_
+  counts_=$(<$entry/cnt) || return 1
+  [[ "$counts_" =~ ^([0-9]+)\ ([0-9]+)\ ([0-9]+)$ ]] || return 1
+  local -a counts=( ${BASH_REMATCH[@]:1} )
+  cat -- $entry/out  # byte for byte, trailing newlines included
+  cat -- $entry/err >&2
+  printf '%s\t%s\n' '--- CACHED' $filename
+  TestCountT+=${counts[0]}
+  PassCountT+=${counts[1]}
+  SkipCountT+=${counts[2]}
+}
+
+# tesht.cacheKey prints the cache key for running filename with runRegexp and
+# jobs, or nothing when filename is outside a git work tree or any input cannot be
+# read (it fails closed). The key covers the tesht binary, bash's version, the
+# working directory, the file's path and bytes, its repo's HEAD, index, tracked
+# changes (plumbing diff, ignoring user diff config) and untracked non-ignored
+# files, -j, the --run filter, TESHT_NO_SKIP and the caller's TESHT_CACHE_KEY.
+# Ignored files (build outputs, .env) are not in the key; pass their versions in
+# TESHT_CACHE_KEY. The work tree is compared to the index (diff-files), which needs
+# no commit, and the index and HEAD are keyed directly.
+tesht.cacheKey() {
+  local filename=$1 runRegexp_=$2 jobs=$3
+  local path_ root_
+  path_=$(realpath -- $filename 2>/dev/null) && [[ -n "$path_" ]] || return 0
+  root_=$(tesht.git "${path_%/*}" rev-parse --show-toplevel 2>/dev/null) && [[ -n "$root_" ]] || return 0
+  local inputLines
+  inputLines=$(
+    set -o pipefail
+    local teshtSum_ fileSum_
+    teshtSum_=$(sha256sum <$TeshtPathT) && echo "tesht $teshtSum_" &&
+    echo "bash $BASH_VERSION" &&
+    echo "cwd $PWD" &&
+    fileSum_=$(sha256sum <"$path_") && echo "file $path_ $fileSum_" &&
+    echo "head $(tesht.git "$root_" rev-parse --verify -q HEAD || echo none)" &&
+    tesht.git "$root_" ls-files -s &&
+    tesht.git "$root_" diff-files -p --binary --no-ext-diff --ignore-submodules=none &&
+    tesht.git "$root_" ls-files -o --exclude-standard -z | (cd "$root_" && xargs -0 -r sha256sum --) &&
+    echo "jobs $jobs" &&
+    echo "run $runRegexp_" &&
+    echo "noskip ${TESHT_NO_SKIP:-}" &&   # one labeled line each: an empty value must not shift the next
+    echo "extra ${TESHT_CACHE_KEY:-}"
+  ) || return 0
+  sha256sum <<<"$inputLines" | cut -d ' ' -f 1
+}
+
 # tesht.UnixMilli returns the current time in Unix time as milliseconds.
 tesht.UnixMilli() {
   local whole='' fraction=''
@@ -876,6 +990,9 @@ RunRegexpT_=''
 FilenamesT=()
 JobsT=1
 FileJobsT=1
+CacheT=0
+CacheDirT=''
+TeshtPathT=''
 while (( $# )); do
   case $1 in
     -h|--help)  echo "$Usage_"; exit;;
@@ -901,6 +1018,12 @@ while (( $# )); do
     --jobs=*)
       JobsT=${1#--jobs=}
       [[ $JobsT =~ ^[0-9]+$ ]] || { echo "error: --jobs requires a non-negative integer, got: $JobsT" >&2; exit 2; }
+      shift
+      ;;
+    --cache)
+      CacheT=1
+      CacheDirT=${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/tesht
+      TeshtPathT=$(realpath -- ${BASH_SOURCE[0]})
       shift
       ;;
     -p|--file-jobs)

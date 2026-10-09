@@ -1411,6 +1411,301 @@ normalizeRun() {
   tr '\r' '\n' <<<$1 | sed 's/\x1b\[[0-9;]*m//g; s/[0-9][0-9]*ms/Nms/g' | grep -v '^[[:space:]]*$'
 }
 
+
+# cacheRepo makes a git repo in `dir`/repo holding one test file, a_test.bash,
+# whose test_a appends a line to `dir`/runs each time it executes (outside the
+# repo, so counting runs does not change the cache key), then runs `body`.
+cacheRepo() {
+  local dir=$1 body=${2:-:}
+  mkdir $dir/repo
+  git -C $dir/repo init -q
+  echo "test_a() { echo ran >>$dir/runs; $body; }" >$dir/repo/a_test.bash
+  echo helper >$dir/repo/lib.txt
+  git -C $dir/repo add -A
+  git -C $dir/repo -c user.name=t -c user.email=t@t commit -qm first
+}
+
+# runCached runs tesht --cache (plus `args`) on a_test.bash in `dir`/repo with
+# the cache under `dir`/cache, and prints the last line of its output.
+runCached() {
+  local dir=$1
+  local -a args=( "${@:2}" )
+  (cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache "${args[@]}" a_test.bash 2>&1) | tail -1
+}
+
+# runCount prints how many times a fixture test has executed.
+runCount() {
+  local dir=$1
+  [[ -e $dir/runs ]] && grep -c . $dir/runs || echo 0
+}
+
+# test_cli_cache_replays_a_pass verifies --cache runs an unchanged passing file
+# once: the second run replays its results, marked CACHED, without executing it.
+test_cli_cache_replays_a_pass() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+
+  local firstOut_ secondLines
+  firstOut_=$(runCached $dir)
+  secondLines=$(cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache a_test.bash 2>&1)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$firstOut_" '1/1'
+    tesht.AssertGot "$(tail -1 <<<$secondLines)" '1/1'
+    [[ $secondLines == *'--- CACHED'*a_test.bash* ]] || { tesht.Log "want a CACHED line, got: $secondLines"; return 1; }
+    tesht.AssertGot "$(runCount $dir)" '1'
+  END
+}
+
+# test_cli_cache_misses_when_an_input_changes verifies each input in the key
+# makes the next run execute the file again.
+test_cli_cache_misses_when_an_input_changes() {
+  local -A case1=([name]='test file edited'     [change]='echo "test_b() { :; }" >>a_test.bash')
+  local -A case2=([name]='other tracked file'   [change]='echo x >other.txt; git add other.txt')
+  local -A case3=([name]='untracked file'       [change]='echo x >scratch.txt')
+  local -A case4=([name]='new commit'           [change]='echo y >more.txt; git add more.txt; git -c user.name=t -c user.email=t@t commit -qm second')
+  local -A case5=([name]='--run filter'         [change]=':' [runArgs]=$'--run\ntest_a')
+  local -A case6=([name]='TESHT_CACHE_KEY'      [change]=':' [env]='TESHT_CACHE_KEY=v2')
+  local -A case7=([name]='TESHT_NO_SKIP'        [change]=':' [env]='TESHT_NO_SKIP=1')
+  local -A case8=([name]='-j value'             [change]=':' [runArgs]=$'-j\n2')
+  local -A case10=([name]='tracked file edited, unstaged' [change]='echo x >>lib.txt')
+  local -A case9=([name]='-x trace mode'        [change]=':' [runArgs]='-x')
+
+  subtest() {
+    local casename=$1 runArgs='' env=''
+    eval "$(tesht.Inherit $casename)"
+
+    ## arrange
+    local dir
+    tesht.MktempDir dir || return 128
+    cacheRepo $dir
+    runCached $dir >/dev/null
+    runCached $dir >/dev/null
+    # Unchanged, the second run is a hit: a miss below is caused by the change.
+    [[ $(runCount $dir) == 1 ]] || { tesht.Log "want a hit before the change, got $(runCount $dir) runs"; return 1; }
+
+    ## act
+    (cd $dir/repo && eval $change)
+    (cd $dir/repo && env $env XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache $runArgs a_test.bash >/dev/null 2>&1)
+
+    ## assert
+    tesht.AssertGot "$(runCount $dir)" '2'
+  }
+
+  tesht.Run ${!case@}
+}
+
+# test_cli_cache_never_stores_a_failure verifies a failing file runs every time.
+test_cli_cache_never_stores_a_failure() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir 'return 1'
+
+  local firstOut_ secondOut_
+  firstOut_=$(runCached $dir)
+  secondOut_=$(runCached $dir)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$firstOut_" '0/1'
+    tesht.AssertGot "$secondOut_" '0/1'
+    tesht.AssertGot "$(runCount $dir)" '2'
+  END
+}
+
+# test_cli_cache_is_opt_in verifies a run without --cache neither reads a
+# matching stored entry nor creates a cache.
+test_cli_cache_is_opt_in() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  runCached $dir >/dev/null
+
+  (cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT a_test.bash >/dev/null 2>&1)
+  (cd $dir/repo && XDG_CACHE_HOME=$dir/fresh $TESHT_PATHT a_test.bash >/dev/null 2>&1)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$(runCount $dir)" '3'
+    [[ ! -e $dir/fresh ]] || { tesht.Log 'a run without --cache wrote a cache'; return 1; }
+  END
+}
+
+# test_cli_cache_outside_git_runs_uncached verifies a file outside any git work
+# tree runs every time, with a warning on stderr.
+test_cli_cache_outside_git_runs_uncached() {
+  local dir
+  tesht.MktempDir dir || return 128
+  mkdir $dir/plain
+  echo "test_a() { echo ran >>$dir/runs; }" >$dir/plain/a_test.bash
+
+  local errLines
+  (cd $dir/plain && XDG_CACHE_HOME=$dir/cache GIT_CEILING_DIRECTORIES=$dir $TESHT_PATHT --cache a_test.bash >/dev/null 2>$dir/err)
+  (cd $dir/plain && XDG_CACHE_HOME=$dir/cache GIT_CEILING_DIRECTORIES=$dir $TESHT_PATHT --cache a_test.bash >/dev/null 2>&1)
+  errLines=$(<$dir/err)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$(runCount $dir)" '2'
+    [[ $errLines == *'not in a git work tree'* ]] || { tesht.Log "want a warning, got: $errLines"; return 1; }
+  END
+}
+
+# test_cli_cache_runs_when_an_entry_is_partial verifies a stored entry missing a
+# part (here its stdout) is not replayed: the file runs again.
+test_cli_cache_runs_when_an_entry_is_partial() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  runCached $dir >/dev/null
+
+  local entry_
+  entry_=$(find $dir/cache/tesht -mindepth 1 -maxdepth 1 -type d ! -name '.tmp.*' | head -n 1)
+  [[ -n "$entry_" ]] || { tesht.Log 'the first run stored no entry'; return 1; }
+  rm -- "$entry_"/out
+  runCached $dir >/dev/null
+
+  tesht.AssertGot "$(runCount $dir)" '2'
+}
+
+# test_cli_cache_replays_output_faithfully verifies a replay prints what the run
+# printed: its result lines on stdout, its stderr, and its skip count.
+test_cli_cache_replays_output_faithfully() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir 'echo note >&2'
+  echo 'test_s() { tesht.Skip "later"; }' >>$dir/repo/a_test.bash
+  git -C $dir/repo add -A
+
+  local firstLines secondLines
+  firstLines=$(cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache a_test.bash 2>$dir/first.err)
+  secondLines=$(cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache a_test.bash 2>$dir/second.err)
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$(normalizeRun "$secondLines" | grep -v -- '--- CACHED')" "$(normalizeRun "$firstLines")"
+    tesht.AssertGot "$(<$dir/second.err)" "$(<$dir/first.err)"
+    [[ $(<$dir/first.err) == *note* ]] || { tesht.Log "the fixture's stderr never reached tesht's stderr: $(<$dir/first.err)"; return 1; }
+    [[ $secondLines == *'(1 skipped)'* ]] || { tesht.Log "want the skip count, got: $secondLines"; return 1; }
+    tesht.AssertGot "$(runCount $dir)" '1'
+  END
+}
+
+# test_cli_runs_without_home verifies plain tesht, without --cache, needs no HOME.
+test_cli_runs_without_home() {
+  local dir
+  tesht.MktempDir dir || return 128
+  echo 'test_a() { :; }' >$dir/a_test.bash
+
+  local gotOut_
+  gotOut_=$(cd $dir && env -u HOME -u XDG_CACHE_HOME $TESHT_PATHT a_test.bash 2>&1 | tail -1)
+
+  tesht.AssertGot "$gotOut_" '1/1'
+}
+
+# test_cli_cache_misses_an_unstaged_edit_before_any_commit verifies a repo with
+# no commit yet still keys its work tree: editing a staged helper without
+# staging the edit makes the next run execute.
+test_cli_cache_misses_an_unstaged_edit_before_any_commit() {
+  local dir
+  tesht.MktempDir dir || return 128
+  mkdir $dir/repo
+  git -C $dir/repo init -q
+  echo "test_a() { echo ran >>$dir/runs; }" >$dir/repo/a_test.bash
+  echo helper >$dir/repo/lib.txt
+  git -C $dir/repo add -A
+  runCached $dir >/dev/null
+
+  echo x >>$dir/repo/lib.txt
+  runCached $dir >/dev/null
+
+  tesht.AssertGot "$(runCount $dir)" '2'
+}
+
+# test_cli_cache_does_not_store_a_run_that_changed_the_repo verifies the key is
+# checked again after the run: a file whose test edits the repo is not stored.
+test_cli_cache_does_not_store_a_run_that_changed_the_repo() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir "echo x >>$dir/repo/lib.txt"
+  runCached $dir >/dev/null
+  (cd $dir/repo && git checkout -q -- lib.txt)
+  runCached $dir >/dev/null
+
+  tesht.AssertGot "$(runCount $dir)" '2'
+}
+
+# test_cli_cache_composes_with_p verifies --cache under -p replays both files
+# on the second run, in argument order.
+test_cli_cache_composes_with_p() {
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  echo "test_b() { echo ran >>$dir/runs; }" >$dir/repo/b_test.bash
+  git -C $dir/repo add -A
+
+  local secondLines
+  (cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache -p 2 a_test.bash b_test.bash >/dev/null 2>&1)
+  secondLines=$(cd $dir/repo && XDG_CACHE_HOME=$dir/cache $TESHT_PATHT --cache -p 2 a_test.bash b_test.bash 2>&1)
+
+  local cachedLines
+  cachedLines=$(grep -oE 'CACHED.*' <<<$secondLines | tr -s '\t ' ' ')
+
+  tesht.Softly <<'  END'
+    tesht.AssertGot "$cachedLines" $'CACHED a_test.bash\nCACHED b_test.bash'
+    tesht.AssertGot "$(tail -1 <<<$secondLines)" '2/2'
+    tesht.AssertGot "$(runCount $dir)" '2'
+  END
+}
+
+# test_replayEntry_keeps_trailing_newlines verifies a replay writes the stored
+# output byte for byte.
+test_replayEntry_keeps_trailing_newlines() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  mkdir $dir/e
+  echo '1 1 0' >$dir/e/cnt
+  printf 'a\n\n' >$dir/e/out
+  : >$dir/e/err
+
+  ## act
+  local got_
+  got_=$(CacheDirT=$dir; local -i TestCountT=0 PassCountT=0 SkipCountT=0; tesht.replayEntry $dir/e f; echo x)
+
+  ## assert
+  tesht.AssertGot "$got_" $'a\n\n--- CACHED\tf\nx'
+}
+
+# test_cacheKey_fails_closed_when_a_hash_fails verifies an unreadable tesht binary
+# yields no key rather than a key that omits it.
+test_cacheKey_fails_closed_when_a_hash_fails() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+
+  ## act
+  local got_
+  got_=$(TeshtPathT=$dir/missing; tesht.cacheKey $dir/repo/a_test.bash '' 1 2>/dev/null)
+
+  ## assert
+  tesht.AssertGot "$got_" ''
+}
+
+# test_git_ignores_inherited_locations verifies git runs on the given repo even
+# when a caller exported variables that point elsewhere.
+test_git_ignores_inherited_locations() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+
+  ## act
+  local got_
+  got_=$(GIT_COMMON_DIR=$dir/nowhere GIT_OBJECT_DIRECTORY=$dir/nowhere tesht.git $dir/repo rev-parse --show-toplevel 2>&1)
+
+  ## assert
+  tesht.AssertGot "$got_" "$(realpath $dir/repo)"
+}
+
 ## helpers
 
 echoLines() {
