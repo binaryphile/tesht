@@ -1756,8 +1756,8 @@ test_cli_cache_dir_with_a_space() {
   END
 }
 
-# test_cli_cache_does_not_read_an_untracked_fifo verifies an untracked FIFO is
-# keyed by its type and never opened, so the run does not block.
+# test_cli_cache_does_not_read_an_untracked_fifo verifies an untracked FIFO never
+# blocks a run (git does not list FIFOs as untracked; tesht reads only regular files).
 test_cli_cache_does_not_read_an_untracked_fifo() {
   ## arrange
   local dir
