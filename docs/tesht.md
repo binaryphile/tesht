@@ -117,10 +117,12 @@ repo's tracked and untracked files: ignored files (build outputs, `.env`), a
 server, the network, tools on PATH, environment variables other than the keyed
 ones (`CI`, `LANG`, your project's own). Pass those in `TESHT_CACHE_KEY` (for
 example, tool versions), or leave `--cache` off for such suites. A file outside
-any git work tree runs uncached, with a warning. Under `--cache` a file's output
+any git work tree, or next to an untracked nested repo, runs uncached, with a
+warning. Under `--cache` a file's output
 appears when it finishes, run or replayed. Also outside the key: edits inside an
 already dirty submodule, paths marked assume-unchanged or skip-worktree,
-edits a clean filter hides, and tracked mode changes under `core.fileMode=false`.
+edits a clean filter hides, tracked mode changes under `core.fileMode=false`,
+and empty untracked directories.
 Skipped tests are stored like passes, though a skip's reason may lie outside
 the key. A symlinked test file is keyed by its target's repo. Touching a
 tracked file without changing it can cause a miss, never a stale hit.

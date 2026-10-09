@@ -880,7 +880,7 @@ tesht.runFile() {
   local key_
   key_=$(tesht.cacheKey $filename "$runRegexp_" $jobs)
   if [[ -z "$key_" ]]; then
-    echo "tesht: --cache: no cache key for $filename (not in a git work tree, or git failed); running it uncached" >&2
+    echo "tesht: --cache: no cache key for $filename (not in a git work tree, next to an untracked nested repo, or git failed); running it uncached" >&2
     tesht.testFile $filename "$runRegexp_" $jobs
     return
   fi
@@ -983,7 +983,10 @@ tesht.cacheKey() {
 tesht.untrackedInputs() {
   local path=''
   while IFS= read -r -d '' path; do
-    stat -c '%A %F %N' -- $path || return 1  # a name with a newline splits, fails here, and leaves no key
+    [[ $path != *$NL* ]] || return 1  # unquoted under IFS=newline, it would name other files
+    # A directory here is a nested repo git did not descend into: its contents are unseen.
+    [[ ! -d $path || -L $path ]] || return 1
+    stat -c '%A %F %N' -- $path || return 1
     if [[ -f $path && ! -L $path ]]; then
       sha256sum -- $path || return 1
     fi
@@ -1038,6 +1041,7 @@ while (( $# )); do
     --cache)
       CacheT=1
       CacheDirT=${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/tesht
+      [[ $CacheDirT != *$NL* ]] || { echo 'tesht: --cache: the cache path holds a newline; running uncached' >&2; CacheT=0; }
       TeshtPathT=$(realpath -- ${BASH_SOURCE[0]})
       shift
       ;;

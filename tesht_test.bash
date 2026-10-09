@@ -1712,7 +1712,8 @@ test_git_ignores_inherited_locations() {
 }
 
 # test_cacheKey_fails_closed_when_the_file_cannot_be_read verifies an unreadable
-# test file yields no key.
+# test file yields no key. Git's own read of the file fails first, so this covers
+# the contract, not the file hash line in particular.
 test_cacheKey_fails_closed_when_the_file_cannot_be_read() {
   ## arrange
   local dir
@@ -1770,6 +1771,26 @@ test_cli_cache_does_not_read_an_untracked_fifo() {
 
   ## assert
   tesht.AssertRC $rc 0
+}
+
+# test_cli_cache_untracked_nested_repo_runs_uncached verifies a file in a repo
+# holding an untracked nested repo is never replayed: git does not list the
+# nested repo's files, so an edit there could not change the key.
+test_cli_cache_untracked_nested_repo_runs_uncached() {
+  ## arrange
+  local dir
+  tesht.MktempDir dir || return 128
+  cacheRepo $dir
+  git init -q --template= $dir/repo/sub
+  echo one >$dir/repo/sub/data.txt
+
+  ## act
+  runCached $dir >/dev/null
+  echo two >$dir/repo/sub/data.txt
+  runCached $dir >/dev/null
+
+  ## assert
+  tesht.AssertGot "$(runCount $dir)" '2'
 }
 
 ## helpers
