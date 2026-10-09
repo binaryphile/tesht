@@ -719,7 +719,7 @@ tesht.testFiles() {
   callerTrapLines=$(trap -p INT TERM HUP)
   local callerMonitor=+m
   [[ $- == *m* ]] && callerMonitor=-m
-  # Only workers still running are stopped: a reaped worker's pid may belong to someone else now.
+  # Only unreaped workers (running or stopped) are stopped: a reaped worker's pid may belong to someone else now.
   trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]+"${workers[@]}"}); rm -rf -- '$quotedDir'; exit 130' INT
   trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]+"${workers[@]}"}); rm -rf -- '$quotedDir'; exit 143' TERM
   trap 'tesht.stopGroups $(tesht.liveWorkers ${workers[*]+"${workers[@]}"}); rm -rf -- '$quotedDir'; exit 129' HUP
@@ -784,7 +784,7 @@ tesht.liveWorkers() {
   # Each `jobs` stands alone in its substitution: only there does it see this shell's table.
   live_=$(jobs -pr)$NL$(jobs -ps)
   for pid in "$@"; do
-    grep -qx -- $pid <<<"$live_" && echo $pid
+    [[ $NL$live_$NL == *"$NL$pid$NL"* ]] && echo $pid  # in-shell: no fork per pid
   done
   return 0
 }
